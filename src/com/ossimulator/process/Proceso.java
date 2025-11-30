@@ -1,0 +1,199 @@
+package com.ossimulator.process;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
+
+public class Proceso implements Comparable<Proceso> {
+    private String pid;
+    private int arrivalTime;
+    private List<Burst> bursts;
+    private int priority;
+    private int pageCount;
+    private ProcessState state;
+    private int startTime = -1;
+    private int endTime = -1;
+    private int currentBurstIndex = 0;
+    private int burstTimeRemaining = 0;
+    private int totalCPUTimeNeeded = 0;
+    private int cpuTimeUsed = 0;
+    private int contextSwitches = 0;
+    private int lastAccessTime = -1;
+
+    private final ReentrantLock lock = new ReentrantLock();
+    private final Condition stateChanged = lock.newCondition();
+
+    public Proceso(String pid, int arrivalTime, List<Burst> bursts, int priority, int pageCount) {
+        this.pid = pid;
+        this.arrivalTime = arrivalTime;
+        this.bursts = new ArrayList<>(bursts);
+        this.priority = priority;
+        this.pageCount = pageCount;
+        this.state = ProcessState.NEW;
+
+        for (Burst b : bursts) {
+            if (b.getType() == BurstType.CPU) {
+                totalCPUTimeNeeded += b.getDuration();
+            }
+        }
+
+        if (!bursts.isEmpty()) {
+            burstTimeRemaining = bursts.get(0).getDuration();
+        }
+    }
+
+    public String getPid() {
+        return pid;
+    }
+
+    public int getArrivalTime() {
+        return arrivalTime;
+    }
+
+    public List<Burst> getBursts() {
+        return new ArrayList<>(bursts);
+    }
+
+    public int getPriority() {
+        return priority;
+    }
+
+    public int getPageCount() {
+        return pageCount;
+    }
+
+    public ProcessState getState() {
+        lock.lock();
+        try {
+            return state;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public void setState(ProcessState newState) {
+        lock.lock();
+        try {
+            this.state = newState;
+            stateChanged.signalAll();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public int getStartTime() {
+        return startTime;
+    }
+
+    public void setStartTime(int time) {
+        if (this.startTime == -1) {
+            this.startTime = time;
+        }
+    }
+
+    public int getEndTime() {
+        return endTime;
+    }
+
+    public void setEndTime(int time) {
+        this.endTime = time;
+    }
+
+    public int getCurrentBurstIndex() {
+        return currentBurstIndex;
+    }
+
+    public Burst getCurrentBurst() {
+        if (currentBurstIndex < bursts.size()) {
+            return bursts.get(currentBurstIndex);
+        }
+        return null;
+    }
+
+    public int getBurstTimeRemaining() {
+        return burstTimeRemaining;
+    }
+
+    public void setBurstTimeRemaining(int time) {
+        this.burstTimeRemaining = time;
+    }
+
+    public void decrementBurstTime(int amount) {
+        this.burstTimeRemaining -= amount;
+        this.cpuTimeUsed += amount;
+    }
+
+    public boolean moveToNextBurst() {
+        currentBurstIndex++;
+        if (currentBurstIndex < bursts.size()) {
+            burstTimeRemaining = bursts.get(currentBurstIndex).getDuration();
+            return true;
+        }
+        return false;
+    }
+
+    public int getTotalCPUTimeNeeded() {
+        return totalCPUTimeNeeded;
+    }
+
+    public int getCPUTimeUsed() {
+        return cpuTimeUsed;
+    }
+
+    public int getWaitingTime() {
+        if (startTime == -1 || endTime == -1) {
+            return 0;
+        }
+        return (endTime - startTime) - cpuTimeUsed;
+    }
+
+    public int getTurnaroundTime() {
+        if (startTime == -1 || endTime == -1) {
+            return 0;
+        }
+        return endTime - startTime;
+    }
+
+    public int getContextSwitches() {
+        return contextSwitches;
+    }
+
+    public void incrementContextSwitches() {
+        contextSwitches++;
+    }
+
+    public int getLastAccessTime() {
+        return lastAccessTime;
+    }
+
+    public void setLastAccessTime(int time) {
+        this.lastAccessTime = time;
+    }
+
+    public boolean isComplete() {
+        return state == ProcessState.TERMINATED;
+    }
+
+    public void waitForStateChange() throws InterruptedException {
+        lock.lock();
+        try {
+            stateChanged.await();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @Override
+    public int compareTo(Proceso other) {
+        if (this.priority != other.priority) {
+            return Integer.compare(this.priority, other.priority);
+        }
+        return Integer.compare(this.arrivalTime, other.arrivalTime);
+    }
+
+    @Override
+    public String toString() {
+        return pid + " [" + state.getDisplayName() + "]";
+    }
+}
