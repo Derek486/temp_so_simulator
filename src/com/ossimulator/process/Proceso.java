@@ -12,7 +12,7 @@ public class Proceso implements Comparable<Proceso> {
     private int arrivalTime;
     private List<Burst> bursts;
     private int priority;
-    private int pageCount;
+    private int pageCount = 4;
     private ProcessState state;
     private int startTime = -1;
     private int endTime = -1;
@@ -126,6 +126,28 @@ public class Proceso implements Comparable<Proceso> {
             ioIntervals.add(new Interval(ioIntervalStart, time + 1));
             ioIntervalStart = -1;
         }
+    }
+
+    /**
+     * Establece startTime si aún no fue establecido.
+     * Conveniente para que el simulador asigne startTime sólo la primera vez.
+     */
+    public void setStartTimeIfUnset(int time) {
+        if (this.startTime == -1) {
+            this.startTime = time;
+        }
+    }
+
+    public void setPageCount(int count) {
+        this.pageCount = count;
+    }
+
+    public int getCpuTimeUsed() {
+        return cpuTimeUsed;
+    }
+
+    public void addCpuTick() {
+        cpuTimeUsed++;
     }
 
     public String getPid() {

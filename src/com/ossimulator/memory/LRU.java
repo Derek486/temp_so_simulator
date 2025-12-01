@@ -5,6 +5,11 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Map.Entry;
 
+/**
+ * LRU: usamos un mapa frame -> lastAccessTime (basado en currentTime recibido
+ * en pageAccessed). Cuando frameAllocated es invocado lo marcamos como 'no
+ * accedido aún' (Integer.MIN_VALUE). pageAccessed actualiza el tiempo real.
+ */
 public class LRU implements PageReplacementAlgorithm {
     private final Map<Integer, Integer> frameLastAccessTime;
 
@@ -15,15 +20,17 @@ public class LRU implements PageReplacementAlgorithm {
     @Override
     public void pageAccessed(int frame, Proceso process, int pageNumber, int currentTime) {
         if (frame >= 0) {
+            // registrar el tiempo real de acceso para LRU
             frameLastAccessTime.put(frame, currentTime);
         }
     }
 
     @Override
-    public int selectFrameToReplace(Map<Integer, Proceso> frameToProcess, Map<Integer, Integer> frameToPage,
-            int currentTime) {
+    public int selectFrameToReplace(Map<Integer, Proceso> frameToProcess,
+            Map<Integer, Integer> frameToPage, int currentTime) {
         if (frameToProcess.isEmpty())
             return -1;
+
         int lruFrame = -1;
         int minTime = Integer.MAX_VALUE;
         for (Entry<Integer, Proceso> e : frameToProcess.entrySet()) {
@@ -39,8 +46,8 @@ public class LRU implements PageReplacementAlgorithm {
 
     @Override
     public void frameAllocated(int frame, Proceso process, int pageNumber) {
-        // cuando se asigna, consideramos acceso ahora
-        frameLastAccessTime.put(frame, 0);
+        // marcar asignación como 'no accedida aún' para que pueda ser candidata
+        frameLastAccessTime.put(frame, Integer.MIN_VALUE);
     }
 
     @Override

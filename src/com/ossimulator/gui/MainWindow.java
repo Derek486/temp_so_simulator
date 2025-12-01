@@ -43,6 +43,7 @@ public class MainWindow extends JFrame {
     private MemoryPanel memoryPanel;
     private MetricsPanel metricsPanel;
     private OSSimulator simulator;
+    private MemoryManager memoryManager; // <-- referencia mantenida para UI
     private List<Proceso> loadedProcesses = new ArrayList<>();
     private boolean simulationRunning = false;
 
@@ -80,7 +81,7 @@ public class MainWindow extends JFrame {
         });
 
         quantumSpinner = new JSpinner(new SpinnerNumberModel(4, 1, 20, 1));
-        memoryFramesSpinner = new JSpinner(new SpinnerNumberModel(10, 4, 50, 1));
+        memoryFramesSpinner = new JSpinner(new SpinnerNumberModel(10, 1, 200, 1));
 
         logArea = new JTextArea();
         logArea.setEditable(false);
@@ -225,8 +226,14 @@ public class MainWindow extends JFrame {
         int memoryFrames = (int) memoryFramesSpinner.getValue();
         int quantum = (int) quantumSpinner.getValue();
 
-        MemoryManager memoryManager = new MemoryManager(memoryFrames, pageAlgorithm);
-        simulator = new OSSimulator(processes, scheduler, memoryManager, quantum);
+        // keep reference in field so updateUI / MemoryPanel can access it
+        this.memoryManager = new MemoryManager(memoryFrames, pageAlgorithm);
+
+        // register memory update listener to refresh memory panel (EDT)
+        this.memoryManager
+                .setUpdateListener(() -> SwingUtilities.invokeLater(() -> memoryPanel.updateData(this.memoryManager)));
+
+        simulator = new OSSimulator(processes, scheduler, this.memoryManager, quantum);
 
         simulator.setUpdateListener(new OSSimulator.SimulationUpdateListener() {
             @Override
@@ -242,6 +249,9 @@ public class MainWindow extends JFrame {
 
         simulator.getEventLogger().addListener(event -> SwingUtilities.invokeLater(() -> logArea.append(event + "\n")));
 
+        // initial UI refresh so memory table shows initial state
+        memoryPanel.updateData(this.memoryManager);
+
         simulationRunning = true;
         startButton.setEnabled(false);
         stopButton.setEnabled(true);
@@ -252,16 +262,22 @@ public class MainWindow extends JFrame {
         if (simulator != null) {
             simulator.stop();
             simulator = null; // forzar nueva instancia en next start
-            simulationRunning = false;
-            startButton.setEnabled(true);
-            stopButton.setEnabled(false);
         }
+        // clear memory manager reference so next run will recreate it
+        this.memoryManager = null;
+        simulationRunning = false;
+        startButton.setEnabled(true);
+        stopButton.setEnabled(false);
     }
 
     private void updateUI() {
         if (simulator != null) {
             schedulingPanel.updateData(simulator);
             metricsPanel.updateMetrics(simulator.getMetrics());
+        }
+        // update memory panel from the current memoryManager reference (may be null)
+        if (this.memoryManager != null) {
+            memoryPanel.updateData(this.memoryManager);
         }
     }
 

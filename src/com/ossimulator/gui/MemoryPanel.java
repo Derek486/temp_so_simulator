@@ -1,11 +1,12 @@
 package com.ossimulator.gui;
 
+import com.ossimulator.memory.MemoryManager;
+import com.ossimulator.process.Proceso;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.FlowLayout;
 import java.awt.Font;
 import java.util.Map;
-
 import javax.swing.BorderFactory;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
@@ -13,11 +14,7 @@ import javax.swing.JScrollPane;
 import javax.swing.JTable;
 import javax.swing.table.DefaultTableModel;
 
-import com.ossimulator.memory.MemoryManager;
-import com.ossimulator.process.Proceso;
-
 public class MemoryPanel extends JPanel {
-    private MemoryManager memoryManager;
     private JTable frameTable;
     private DefaultTableModel tableModel;
     private JLabel pageFaultsLabel;
@@ -31,7 +28,8 @@ public class MemoryPanel extends JPanel {
         titleLabel.setFont(new Font("Arial", Font.BOLD, 16));
         titleLabel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
 
-        tableModel = new DefaultTableModel(new String[]{"Frame", "Process"}, 0) {
+        // Columnas: Frame, Process, Page
+        tableModel = new DefaultTableModel(new String[] { "Frame", "Process", "Page" }, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
                 return false;
@@ -54,21 +52,36 @@ public class MemoryPanel extends JPanel {
         add(statsPanel, BorderLayout.SOUTH);
     }
 
+    /**
+     * Actualiza la tabla usando snapshot de memoryManager.
+     * Debe llamarse desde hilo de la UI (Event Dispatch Thread) para evitar races
+     * en Swing.
+     */
     public void updateData(MemoryManager memoryManager) {
-        this.memoryManager = memoryManager;
-
         if (memoryManager != null) {
             tableModel.setRowCount(0);
 
+            // snapshot thread-safe
             Map<Integer, Proceso> frames = memoryManager.getFrameStatus();
-            for (int i = 0; i < 10; i++) {
-                Proceso p = frames.get(i);
-                Object[] row = {i, p != null ? p.getPid() : "Free"};
+            Map<Integer, Integer> frameToPage = memoryManager.getFrameToPageMap();
+
+            int totalFrames = memoryManager.getTotalFrames();
+
+            for (int i = 0; i < totalFrames; i++) {
+                Proceso p = frames.get(i); // puede ser null => frame libre
+                Integer page = frameToPage.get(i); // puede ser null
+                String procName = (p != null) ? p.getPid() : "Free";
+                String pageStr = (page != null) ? String.valueOf(page) : "-";
+                Object[] row = { i, procName, pageStr };
                 tableModel.addRow(row);
             }
 
             pageFaultsLabel.setText("Page Faults: " + memoryManager.getTotalPageFaults());
             replacementsLabel.setText("Replacements: " + memoryManager.getTotalReplacements());
+        } else {
+            tableModel.setRowCount(0);
+            pageFaultsLabel.setText("Page Faults: 0");
+            replacementsLabel.setText("Replacements: 0");
         }
     }
 }
