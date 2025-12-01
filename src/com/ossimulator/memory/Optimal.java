@@ -1,64 +1,50 @@
 package com.ossimulator.memory;
 
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
-
 import com.ossimulator.process.Proceso;
+import java.util.Map;
 
 public class Optimal implements PageReplacementAlgorithm {
-    private Set<Integer> loadedPages;
-    private List<Proceso> allProcesses;
-    private int currentTime;
 
-    public Optimal(List<Proceso> allProcesses) {
-        this.loadedPages = new HashSet<>();
-        this.allProcesses = new ArrayList<>(allProcesses);
-        this.currentTime = 0;
+    public Optimal(java.util.List<Proceso> allProcesses) {
+        // Actualmente no usamos la lista; mantuve la firma para compatibilidad
     }
 
     @Override
-    public void pageAccessed(Proceso process, int pageNumber, int currentTime) {
-        this.currentTime = currentTime;
-        loadedPages.add(pageNumber);
+    public void pageAccessed(int frame, Proceso process, int pageNumber, int currentTime) {
+        // no-op
     }
 
     @Override
-    public int selectPageToReplace(int currentTime) {
-        if (loadedPages.isEmpty()) {
+    public int selectFrameToReplace(Map<Integer, Proceso> frameToProcess, Map<Integer, Integer> frameToPage,
+            int currentTime) {
+        // Fallback simple: seleccionar el frame con mayor índice (determinista)
+        if (frameToProcess.isEmpty())
             return -1;
+        int chosen = -1;
+        for (int f : frameToProcess.keySet()) {
+            if (f > chosen)
+                chosen = f;
         }
-
-        this.currentTime = currentTime;
-        int pageToReplace = -1;
-        int maxDistance = -1;
-
-        for (int page : loadedPages) {
-            int distance = getDistanceToNextUse(page, currentTime);
-            if (distance > maxDistance) {
-                maxDistance = distance;
-                pageToReplace = page;
-            }
-        }
-
-        if (pageToReplace != -1) {
-            loadedPages.remove(pageToReplace);
-        }
-        return pageToReplace;
+        return chosen;
     }
 
-    private int getDistanceToNextUse(int page, int currentTime) {
-        return Integer.MAX_VALUE;
+    @Override
+    public void frameAllocated(int frame, Proceso process, int pageNumber) {
+        // no-op
+    }
+
+    @Override
+    public void frameFreed(int frame) {
+        // no-op
     }
 
     @Override
     public String getName() {
-        return "Optimal";
+        return "Optimal (heuristic fallback)";
     }
 
     @Override
     public void reset() {
-        loadedPages.clear();
+        // no-op
     }
 }

@@ -1,6 +1,8 @@
 package com.ossimulator.process;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
@@ -24,6 +26,21 @@ public class Proceso implements Comparable<Proceso> {
     private final ReentrantLock lock = new ReentrantLock();
     private final Condition stateChanged = lock.newCondition();
 
+    public static class Interval {
+        public final int start;
+        public final int end;
+
+        public Interval(int s, int e) {
+            this.start = s;
+            this.end = e;
+        }
+    }
+
+    private final List<Interval> cpuIntervals = new LinkedList<>();
+    private final List<Interval> ioIntervals = new LinkedList<>();
+    private int cpuIntervalStart = -1;
+    private int ioIntervalStart = -1;
+
     public Proceso(String pid, int arrivalTime, List<Burst> bursts, int priority, int pageCount) {
         this.pid = pid;
         this.arrivalTime = arrivalTime;
@@ -40,6 +57,71 @@ public class Proceso implements Comparable<Proceso> {
 
         if (!bursts.isEmpty()) {
             burstTimeRemaining = bursts.get(0).getDuration();
+        }
+    }
+
+    public void reset() {
+        this.state = ProcessState.NEW;
+        this.startTime = -1;
+        this.endTime = -1;
+        this.currentBurstIndex = 0;
+        this.cpuTimeUsed = 0;
+        this.contextSwitches = 0;
+        this.lastAccessTime = -1;
+        if (!bursts.isEmpty()) {
+            burstTimeRemaining = bursts.get(0).getDuration();
+        } else {
+            burstTimeRemaining = 0;
+        }
+        // limpiar intervalos
+        cpuIntervals.clear();
+        ioIntervals.clear();
+        cpuIntervalStart = -1;
+        ioIntervalStart = -1;
+    }
+
+    public void startCpuInterval(int time) {
+        if (cpuIntervalStart == -1) {
+            cpuIntervalStart = time;
+        }
+    }
+
+    public void endCpuInterval(int time) {
+        if (cpuIntervalStart != -1) {
+            cpuIntervals.add(new Interval(cpuIntervalStart, time));
+            cpuIntervalStart = -1;
+        }
+    }
+
+    public void startIoInterval(int time) {
+        if (ioIntervalStart == -1) {
+            ioIntervalStart = time;
+        }
+    }
+
+    public void endIoInterval(int time) {
+        if (ioIntervalStart != -1) {
+            ioIntervals.add(new Interval(ioIntervalStart, time));
+            ioIntervalStart = -1;
+        }
+    }
+
+    // getters inmutables para que el UI los lea
+    public List<Interval> getCpuIntervals() {
+        return Collections.unmodifiableList(cpuIntervals);
+    }
+
+    public List<Interval> getIoIntervals() {
+        return Collections.unmodifiableList(ioIntervals);
+    }
+
+    // si el proceso termina estando en medio de un intervalo, cerrarlo
+    public void closeOpenIntervalsAtTermination(int time) {
+        if (cpuIntervalStart != -1) {
+            endCpuInterval(time);
+        }
+        if (ioIntervalStart != -1) {
+            endIoInterval(time);
         }
     }
 
@@ -119,9 +201,12 @@ public class Proceso implements Comparable<Proceso> {
         this.burstTimeRemaining = time;
     }
 
-    public void decrementBurstTime(int amount) {
+    // Nuevo: decrementa tiempo de la ráfaga actual, y opcionalmente cuenta como CPU
+    public void decrementCurrentBurstTime(int amount, boolean isCpu) {
         this.burstTimeRemaining -= amount;
-        this.cpuTimeUsed += amount;
+        if (isCpu) {
+            this.cpuTimeUsed += amount;
+        }
     }
 
     public boolean moveToNextBurst() {

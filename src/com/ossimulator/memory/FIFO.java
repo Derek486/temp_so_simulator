@@ -1,27 +1,43 @@
 package com.ossimulator.memory;
 
+import com.ossimulator.process.Proceso;
 import java.util.LinkedList;
+import java.util.Map;
 import java.util.Queue;
 
-import com.ossimulator.process.Proceso;
-
 public class FIFO implements PageReplacementAlgorithm {
-    private Queue<Integer> pageQueue;
+    private Queue<Integer> frameQueue;
 
     public FIFO() {
-        this.pageQueue = new LinkedList<>();
+        this.frameQueue = new LinkedList<>();
     }
 
     @Override
-    public void pageAccessed(Proceso process, int pageNumber, int currentTime) {
-        if (!pageQueue.contains(pageNumber)) {
-            pageQueue.offer(pageNumber);
+    public void pageAccessed(int frame, Proceso process, int pageNumber, int currentTime) {
+        // FIFO no requiere actualizar en access
+    }
+
+    @Override
+    public int selectFrameToReplace(Map<Integer, Proceso> frameToProcess, Map<Integer, Integer> frameToPage,
+            int currentTime) {
+        // poll until we find a frame that is currently allocated
+        while (!frameQueue.isEmpty()) {
+            Integer f = frameQueue.poll();
+            if (f != null && frameToProcess.containsKey(f)) {
+                return f;
+            }
         }
+        return -1;
     }
 
     @Override
-    public int selectPageToReplace(int currentTime) {
-        return pageQueue.poll() != null ? pageQueue.peek() : -1;
+    public void frameAllocated(int frame, Proceso process, int pageNumber) {
+        frameQueue.offer(frame);
+    }
+
+    @Override
+    public void frameFreed(int frame) {
+        frameQueue.remove(frame);
     }
 
     @Override
@@ -31,6 +47,6 @@ public class FIFO implements PageReplacementAlgorithm {
 
     @Override
     public void reset() {
-        pageQueue.clear();
+        frameQueue.clear();
     }
 }

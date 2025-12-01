@@ -1,5 +1,6 @@
 package com.ossimulator.gui;
 
+import com.ossimulator.process.Proceso;
 import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Dimension;
@@ -11,14 +12,12 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-
 import javax.swing.JPanel;
-
-import com.ossimulator.process.Proceso;
 
 public class GanttChart extends JPanel {
     private List<Proceso> processes;
     private Map<String, List<Integer>> processTimelines;
+    private int currentTimeDisplayed = 0;
     private int maxTime;
 
     public GanttChart() {
@@ -31,7 +30,8 @@ public class GanttChart extends JPanel {
 
     public void updateChart(List<Proceso> allProcesses, int currentTime) {
         this.processes = new ArrayList<>(allProcesses);
-        this.maxTime = currentTime + 10;
+        this.maxTime = Math.max(currentTime + 10, this.maxTime);
+        this.currentTimeDisplayed = currentTime;
         repaint();
     }
 
@@ -52,7 +52,7 @@ public class GanttChart extends JPanel {
 
         g2.setFont(new Font("Arial", Font.BOLD, 12));
 
-        for (int i = 0; i <= maxTime; i += 5) {
+        for (int i = 0; i <= maxTime; i ++) {
             int x = margin + (int) ((double) i / maxTime * chartWidth);
             g2.drawLine(x, margin + chartHeight, x, margin + chartHeight + 5);
             g2.drawString(String.valueOf(i), x - 10, margin + chartHeight + 20);
@@ -63,10 +63,10 @@ public class GanttChart extends JPanel {
 
         for (Proceso p : processes) {
             g2.drawString(p.getPid(), 10, yPos + 15);
-
-            if (p.getStartTime() != -1 && p.getEndTime() != -1) {
+            int displayEnd = (p.getEndTime() == -1) ? currentTimeDisplayed : p.getEndTime();
+            if (p.getStartTime() != -1) {
                 int startX = margin + (int) ((double) p.getStartTime() / maxTime * chartWidth);
-                int endX = margin + (int) ((double) p.getEndTime() / maxTime * chartWidth);
+                int endX = margin + (int) ((double) displayEnd / maxTime * chartWidth);
                 int width = Math.max(1, endX - startX);
 
                 Color color;

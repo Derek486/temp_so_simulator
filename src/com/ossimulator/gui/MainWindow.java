@@ -1,12 +1,26 @@
 package com.ossimulator.gui;
 
+import com.ossimulator.memory.FIFO;
+import com.ossimulator.memory.LRU;
+import com.ossimulator.memory.MemoryManager;
+import com.ossimulator.memory.Optimal;
+import com.ossimulator.memory.PageReplacementAlgorithm;
+import com.ossimulator.process.Burst;
+import com.ossimulator.process.Proceso;
+import com.ossimulator.scheduling.FCFS;
+import com.ossimulator.scheduling.PriorityScheduling;
+import com.ossimulator.scheduling.RoundRobin;
+import com.ossimulator.scheduling.SJF;
+import com.ossimulator.scheduling.SchedulingAlgorithm;
+import com.ossimulator.simulator.OSSimulator;
+import com.ossimulator.util.ConfigParser;
+import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Font;
 import java.awt.GridLayout;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
@@ -24,26 +38,12 @@ import javax.swing.JTextArea;
 import javax.swing.SpinnerNumberModel;
 import javax.swing.SwingUtilities;
 
-import com.ossimulator.memory.FIFO;
-import com.ossimulator.memory.LRU;
-import com.ossimulator.memory.MemoryManager;
-import com.ossimulator.memory.Optimal;
-import com.ossimulator.memory.PageReplacementAlgorithm;
-import com.ossimulator.process.Burst;
-import com.ossimulator.process.BurstType;
-import com.ossimulator.scheduling.FCFS;
-import com.ossimulator.scheduling.PriorityScheduling;
-import com.ossimulator.scheduling.RoundRobin;
-import com.ossimulator.scheduling.SJF;
-import com.ossimulator.scheduling.SchedulingAlgorithm;
-import com.ossimulator.simulator.OSSimulator;
-import com.ossimulator.util.ConfigParser;
-
 public class MainWindow extends JFrame {
     private SchedulingPanel schedulingPanel;
     private MemoryPanel memoryPanel;
     private MetricsPanel metricsPanel;
     private OSSimulator simulator;
+    private List<Proceso> loadedProcesses = new ArrayList<>();
     private boolean simulationRunning = false;
 
     private JComboBox<String> schedulerCombo;
@@ -71,11 +71,11 @@ public class MainWindow extends JFrame {
         memoryPanel = new MemoryPanel();
         metricsPanel = new MetricsPanel();
 
-        schedulerCombo = new JComboBox<>(new String[]{
+        schedulerCombo = new JComboBox<>(new String[] {
                 "FCFS", "SJF", "Round Robin", "Priority"
         });
 
-        pageReplaceCombo = new JComboBox<>(new String[]{
+        pageReplaceCombo = new JComboBox<>(new String[] {
                 "FIFO", "LRU", "Optimal"
         });
 
@@ -108,49 +108,60 @@ public class MainWindow extends JFrame {
     }
 
     private JPanel createControlPanel() {
-        JPanel panel = new JPanel();
-        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
-        panel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
-        panel.setBackground(new Color(240, 240, 240));
+        JPanel mainPanel = new JPanel(new BorderLayout());
+        mainPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+        mainPanel.setBackground(new Color(240, 240, 240));
+
+        // --- PANEL SUPERIOR ---
+        JPanel topPanel = new JPanel();
+        topPanel.setLayout(new BoxLayout(topPanel, BoxLayout.Y_AXIS));
+        topPanel.setBackground(new Color(240, 240, 240));
 
         JLabel configTitle = new JLabel("Configuration");
         configTitle.setFont(new Font("Arial", Font.BOLD, 14));
 
-        panel.add(configTitle);
-        panel.add(Box.createVerticalStrut(10));
+        topPanel.add(configTitle);
+        topPanel.add(Box.createVerticalStrut(10));
 
-        panel.add(new JLabel("Scheduling Algorithm:"));
-        panel.add(schedulerCombo);
-        panel.add(Box.createVerticalStrut(5));
+        topPanel.add(new JLabel("Scheduling Algorithm:"));
+        topPanel.add(schedulerCombo);
+        topPanel.add(Box.createVerticalStrut(5));
 
-        panel.add(new JLabel("Page Replacement:"));
-        panel.add(pageReplaceCombo);
-        panel.add(Box.createVerticalStrut(5));
+        topPanel.add(new JLabel("Page Replacement:"));
+        topPanel.add(pageReplaceCombo);
+        topPanel.add(Box.createVerticalStrut(5));
 
-        panel.add(new JLabel("Quantum (RR):"));
-        panel.add(quantumSpinner);
-        panel.add(Box.createVerticalStrut(5));
+        topPanel.add(new JLabel("Quantum (RR):"));
+        topPanel.add(quantumSpinner);
+        topPanel.add(Box.createVerticalStrut(5));
 
-        panel.add(new JLabel("Memory Frames:"));
-        panel.add(memoryFramesSpinner);
-        panel.add(Box.createVerticalStrut(10));
+        topPanel.add(new JLabel("Memory Frames:"));
+        topPanel.add(memoryFramesSpinner);
+        topPanel.add(Box.createVerticalStrut(10));
 
-        JPanel buttonPanel = new JPanel();
-        buttonPanel.setLayout(new GridLayout(3, 1, 5, 5));
+        JPanel buttonPanel = new JPanel(new GridLayout(3, 1, 5, 5));
         buttonPanel.setBackground(new Color(240, 240, 240));
         buttonPanel.add(loadButton);
         buttonPanel.add(startButton);
         buttonPanel.add(stopButton);
-        panel.add(buttonPanel);
 
-        panel.add(Box.createVerticalStrut(20));
+        topPanel.add(buttonPanel);
+        topPanel.add(Box.createVerticalStrut(10));
+
+        // --- PANEL INFERIOR (EVENT LOG) ---
+        JPanel logPanel = new JPanel(new BorderLayout());
         JLabel logTitle = new JLabel("Event Log");
         logTitle.setFont(new Font("Arial", Font.BOLD, 14));
-        panel.add(logTitle);
-        panel.add(new JScrollPane(logArea));
+        logPanel.add(logTitle, BorderLayout.NORTH);
 
-        panel.add(Box.createVerticalGlue());
-        return panel;
+        JScrollPane logScroll = new JScrollPane(logArea);
+        logPanel.add(logScroll, BorderLayout.CENTER);
+
+        // El top es auto, el log ocupa lo restante
+        mainPanel.add(topPanel, BorderLayout.NORTH);
+        mainPanel.add(logPanel, BorderLayout.CENTER);
+
+        return mainPanel;
     }
 
     private JPanel createVisualPanel() {
@@ -158,7 +169,8 @@ public class MainWindow extends JFrame {
         panel.setLayout(new GridLayout(3, 1));
         panel.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
 
-        panel.add(schedulingPanel);
+        JScrollPane ganttScroll = new JScrollPane(schedulingPanel);
+        panel.add(ganttScroll);
         panel.add(memoryPanel);
         panel.add(metricsPanel);
 
@@ -171,34 +183,42 @@ public class MainWindow extends JFrame {
 
         if (result == JFileChooser.APPROVE_OPTION) {
             try {
-                List<com.ossimulator.process.Proceso> processes = ConfigParser.parseProcessesFromFile(
-                        fileChooser.getSelectedFile().getAbsolutePath()
-                );
+                loadedProcesses = ConfigParser.parseProcessesFromFile(
+                        fileChooser.getSelectedFile().getAbsolutePath());
                 JOptionPane.showMessageDialog(this,
-                    "Loaded " + processes.size() + " processes",
-                    "Success",
-                    JOptionPane.INFORMATION_MESSAGE
-                );
+                        "Loaded " + loadedProcesses.size() + " processes",
+                        "Success",
+                        JOptionPane.INFORMATION_MESSAGE);
             } catch (IOException e) {
                 JOptionPane.showMessageDialog(this,
-                    "Error loading file: " + e.getMessage(),
-                    "Error",
-                    JOptionPane.ERROR_MESSAGE
-                );
+                        "Error loading file: " + e.getMessage(),
+                        "Error",
+                        JOptionPane.ERROR_MESSAGE);
             }
         }
     }
 
+    private List<Proceso> cloneProcesses(List<Proceso> src) {
+        List<Proceso> cloned = new ArrayList<>();
+        for (Proceso p : src) {
+            List<Burst> burstsClone = new ArrayList<>();
+            for (Burst b : p.getBursts()) {
+                burstsClone.add(new Burst(b.getType(), b.getDuration()));
+            }
+            Proceso cp = new Proceso(p.getPid(), p.getArrivalTime(), burstsClone, p.getPriority(), p.getPageCount());
+            cloned.add(cp);
+        }
+        return cloned;
+    }
+
     private void startSimulation() {
-        List<com.ossimulator.process.Proceso> processes = new ArrayList<>();
-        processes.add(new com.ossimulator.process.Proceso("P1", 0,
-            List.of(new Burst(BurstType.CPU, 4), new Burst(BurstType.IO, 3),
-                    new Burst(BurstType.CPU, 5)), 1, 4));
-        processes.add(new com.ossimulator.process.Proceso("P2", 2,
-            List.of(new Burst(BurstType.CPU, 6), new Burst(BurstType.IO, 2),
-                    new Burst(BurstType.CPU, 3)), 2, 5));
-        processes.add(new com.ossimulator.process.Proceso("P3", 4,
-            List.of(new Burst(BurstType.CPU, 8)), 3, 6));
+        if (loadedProcesses == null || loadedProcesses.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "No processes loaded. Please load processes first.", "Error",
+                    JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        List<Proceso> processes = cloneProcesses(this.loadedProcesses);
 
         SchedulingAlgorithm scheduler = createScheduler();
         PageReplacementAlgorithm pageAlgorithm = createPageAlgorithm();
@@ -220,9 +240,7 @@ public class MainWindow extends JFrame {
             }
         });
 
-        simulator.getEventLogger().addListener(event ->
-            SwingUtilities.invokeLater(() -> logArea.append(event + "\n"))
-        );
+        simulator.getEventLogger().addListener(event -> SwingUtilities.invokeLater(() -> logArea.append(event + "\n")));
 
         simulationRunning = true;
         startButton.setEnabled(false);
@@ -233,6 +251,7 @@ public class MainWindow extends JFrame {
     private void stopSimulation() {
         if (simulator != null) {
             simulator.stop();
+            simulator = null; // forzar nueva instancia en next start
             simulationRunning = false;
             startButton.setEnabled(true);
             stopButton.setEnabled(false);
@@ -248,7 +267,7 @@ public class MainWindow extends JFrame {
 
     private void simulationComplete() {
         JOptionPane.showMessageDialog(this, "Simulation complete!",
-            "Info", JOptionPane.INFORMATION_MESSAGE);
+                "Info", JOptionPane.INFORMATION_MESSAGE);
         startButton.setEnabled(true);
         stopButton.setEnabled(false);
     }

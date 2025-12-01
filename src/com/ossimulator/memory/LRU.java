@@ -1,43 +1,51 @@
 package com.ossimulator.memory;
 
+import com.ossimulator.process.Proceso;
 import java.util.HashMap;
 import java.util.Map;
-
-import com.ossimulator.process.Proceso;
+import java.util.Map.Entry;
 
 public class LRU implements PageReplacementAlgorithm {
-    private Map<Integer, Integer> pageAccessTime;
-    private int nextPageToReplace = -1;
+    private final Map<Integer, Integer> frameLastAccessTime;
 
     public LRU() {
-        this.pageAccessTime = new HashMap<>();
+        this.frameLastAccessTime = new HashMap<>();
     }
 
     @Override
-    public void pageAccessed(Proceso process, int pageNumber, int currentTime) {
-        pageAccessTime.put(pageNumber, currentTime);
-    }
-
-    @Override
-    public int selectPageToReplace(int currentTime) {
-        if (pageAccessTime.isEmpty()) {
-            return -1;
+    public void pageAccessed(int frame, Proceso process, int pageNumber, int currentTime) {
+        if (frame >= 0) {
+            frameLastAccessTime.put(frame, currentTime);
         }
+    }
 
-        int lruPage = -1;
-        int minAccessTime = Integer.MAX_VALUE;
-
-        for (Map.Entry<Integer, Integer> entry : pageAccessTime.entrySet()) {
-            if (entry.getValue() < minAccessTime) {
-                minAccessTime = entry.getValue();
-                lruPage = entry.getKey();
+    @Override
+    public int selectFrameToReplace(Map<Integer, Proceso> frameToProcess, Map<Integer, Integer> frameToPage,
+            int currentTime) {
+        if (frameToProcess.isEmpty())
+            return -1;
+        int lruFrame = -1;
+        int minTime = Integer.MAX_VALUE;
+        for (Entry<Integer, Proceso> e : frameToProcess.entrySet()) {
+            int f = e.getKey();
+            int t = frameLastAccessTime.getOrDefault(f, Integer.MIN_VALUE);
+            if (t < minTime) {
+                minTime = t;
+                lruFrame = f;
             }
         }
+        return lruFrame;
+    }
 
-        if (lruPage != -1) {
-            pageAccessTime.remove(lruPage);
-        }
-        return lruPage;
+    @Override
+    public void frameAllocated(int frame, Proceso process, int pageNumber) {
+        // cuando se asigna, consideramos acceso ahora
+        frameLastAccessTime.put(frame, 0);
+    }
+
+    @Override
+    public void frameFreed(int frame) {
+        frameLastAccessTime.remove(frame);
     }
 
     @Override
@@ -47,6 +55,6 @@ public class LRU implements PageReplacementAlgorithm {
 
     @Override
     public void reset() {
-        pageAccessTime.clear();
+        frameLastAccessTime.clear();
     }
 }
