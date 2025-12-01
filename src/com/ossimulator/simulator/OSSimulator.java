@@ -53,6 +53,9 @@ public class OSSimulator {
         this.memoryManager = memoryManager;
         this.timeSlice = Math.max(1, quantum);
         this.eventLogger = new EventLogger();
+        if (this.memoryManager != null) {
+            this.memoryManager.setEventLogger(this.eventLogger);
+        }
         this.metrics = new SystemMetrics();
     }
 
@@ -253,7 +256,7 @@ public class OSSimulator {
 
                             // configurar I/O correctamente
                             runningProcess.setBurstTimeRemaining(nextBurst.getDuration());
-                            runningProcess.startIoInterval(currentTime);
+                            runningProcess.startIoInterval(currentTime + 1);
                             runningProcess.setState(ProcessState.BLOCKED_IO);
 
                             // mover a IO queue SOLO UNA VEZ
@@ -304,8 +307,14 @@ public class OSSimulator {
     }
 
     private void finalizeSimulation() {
-        metrics.setTotalCPUTime(currentTime);
+        int totalCpu = allProcesses.stream().mapToInt(Proceso::getCPUTimeUsed).sum();
+        int totalTime = currentTime;
+        int totalIdle = Math.max(0, totalTime - totalCpu);
+
+        metrics.setTotalCPUTime(totalCpu);
+        metrics.setTotalIdleTime(totalIdle);
         metrics.setContextSwitches(contextSwitches);
+
         eventLogger.log("Simulation complete");
     }
 

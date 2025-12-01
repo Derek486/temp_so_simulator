@@ -88,7 +88,7 @@ public class Proceso implements Comparable<Proceso> {
 
     public void endCpuInterval(int time) {
         if (cpuIntervalStart != -1) {
-            cpuIntervals.add(new Interval(cpuIntervalStart, time));
+            cpuIntervals.add(new Interval(cpuIntervalStart, time + 1));
             cpuIntervalStart = -1;
         }
     }
@@ -101,7 +101,7 @@ public class Proceso implements Comparable<Proceso> {
 
     public void endIoInterval(int time) {
         if (ioIntervalStart != -1) {
-            ioIntervals.add(new Interval(ioIntervalStart, time));
+            ioIntervals.add(new Interval(ioIntervalStart, time + 1));
             ioIntervalStart = -1;
         }
     }
@@ -118,10 +118,13 @@ public class Proceso implements Comparable<Proceso> {
     // si el proceso termina estando en medio de un intervalo, cerrarlo
     public void closeOpenIntervalsAtTermination(int time) {
         if (cpuIntervalStart != -1) {
-            endCpuInterval(time);
+            // cerramos incluyendo el tick actual
+            cpuIntervals.add(new Interval(cpuIntervalStart, time + 1));
+            cpuIntervalStart = -1;
         }
         if (ioIntervalStart != -1) {
-            endIoInterval(time);
+            ioIntervals.add(new Interval(ioIntervalStart, time + 1));
+            ioIntervalStart = -1;
         }
     }
 

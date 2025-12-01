@@ -16,7 +16,7 @@ public class MemoryManager {
     private Map<Integer, Integer> frameToPage; // page number stored in that frame
     private Map<Proceso, Set<Integer>> processPages;
     private PageReplacementAlgorithm algorithm;
-    private EventLogger eventLogger;
+    private EventLogger eventLogger; // ahora inyectable
     private int totalPageFaults = 0;
     private int totalReplacements = 0;
     private int currentTime = 0;
@@ -29,8 +29,14 @@ public class MemoryManager {
         this.algorithm = algorithm;
         this.frameToProcess = new HashMap<>();
         this.frameToPage = new HashMap<>();
-        this.eventLogger = new EventLogger();
+        // NO crear EventLogger aquí — será inyectado desde OSSimulator
         this.processPages = new HashMap<>();
+    }
+
+    // Permitir inyectar el logger del simulador para que todos los logs salgan al
+    // mismo sitio
+    public void setEventLogger(EventLogger logger) {
+        this.eventLogger = logger;
     }
 
     public boolean loadProcessPages(Proceso process) {
@@ -68,10 +74,6 @@ public class MemoryManager {
         }
     }
 
-    // Método NO bloqueante: intenta asignar todas las páginas del proceso
-    // inmediatamente (pero realizará reemplazos si es necesario).
-    // Devuelve true si pudo asignarlas; false si no es posible liberar/crear
-    // espacio.
     public boolean tryLoadProcessPages(Proceso process) {
         lock.lock();
         try {
@@ -80,8 +82,6 @@ public class MemoryManager {
                 pages.add(i);
             }
 
-            // if we already have enough free frames nothing to do
-            // otherwise try evicting until we have enough
             int needed = pages.size();
             int free = totalFrames - frameToProcess.size();
             int attempts = 0;
@@ -94,8 +94,10 @@ public class MemoryManager {
             }
 
             if ((totalFrames - frameToProcess.size()) < needed) {
-                eventLogger.log(process.getPid() + " cannot allocate pages now (freeFrames=" + getFreeFrames()
-                        + ", needed=" + pages.size() + ")");
+                if (eventLogger != null) {
+                    eventLogger.log(process.getPid() + " cannot allocate pages now (freeFrames=" + getFreeFrames()
+                            + ", needed=" + pages.size() + ")");
+                }
                 return false;
             }
 
@@ -110,9 +112,6 @@ public class MemoryManager {
         }
     }
 
-    /**
-     * Intenta expulsar un frame usando el algoritmo; devuelve true si expulsó uno.
-     */
     private boolean tryEvictOneFrame() {
         if (frameToProcess.isEmpty())
             return false;
@@ -120,26 +119,24 @@ public class MemoryManager {
         if (frameToReplace < 0)
             return false;
 
-        // evict chosen frame
         Proceso victim = frameToProcess.get(frameToReplace);
         Integer victimPage = frameToPage.get(frameToReplace);
         if (victim != null && victimPage != null) {
-            // eliminar el page mapping del proceso
             Set<Integer> pages = processPages.get(victim);
-            if (pages != null) {
+            if (pages != null)
                 pages.remove(victimPage);
-            }
             frameToProcess.remove(frameToReplace);
             frameToPage.remove(frameToReplace);
 
             algorithm.frameFreed(frameToReplace);
             totalReplacements++;
-            eventLogger.log("Evicted frame " + frameToReplace + " (process="
-                    + (victim != null ? victim.getPid() : "null") + ", page=" + victimPage + ")");
+            if (eventLogger != null) {
+                eventLogger.log("Evicted frame " + frameToReplace + " (process="
+                        + (victim != null ? victim.getPid() : "null") + ", page=" + victimPage + ")");
+            }
             memoryAvailable.signalAll();
             return true;
         } else {
-            // si no hay victim válido, limpiar el frame de todas formas
             frameToProcess.remove(frameToReplace);
             frameToPage.remove(frameToReplace);
             algorithm.frameFreed(frameToReplace);
@@ -157,7 +154,6 @@ public class MemoryManager {
             }
 
             Set<Integer> pages = processPages.get(process);
-            // buscar si esta página ya está cargada en algún frame
             Integer presentFrame = null;
             for (Map.Entry<Integer, Integer> e : frameToPage.entrySet()) {
                 if (e.getValue() == pageNumber && frameToProcess.get(e.getKey()) == process) {
@@ -171,25 +167,27 @@ public class MemoryManager {
                 totalPageFaults++;
 
                 if (frameToProcess.size() >= totalFrames) {
-                    // evict frames until one becomes free
                     boolean freed = tryEvictOneFrame();
                     if (!freed) {
-                        // fallback: cannot handle, just return (shouldn't happen)
+                        // fallback: no se pudo asignar — devolver (no ideal)
                         return;
                     }
                 }
 
-                // allocate a frame for this page
+                // allocate a frame for this page (allocatePage already calls
+                // algorithm.frameAllocated)
                 int frame = allocatePage(process, pageNumber);
                 if (frame >= 0) {
                     pages.add(pageNumber);
-                    algorithm.frameAllocated(frame, process, pageNumber);
+                    // NO llamar algorithm.frameAllocated de nuevo (allocatePage ya lo hizo)
                 }
             } else {
                 // page already present: notify algorithm of access
                 algorithm.pageAccessed(presentFrame, process, pageNumber, currentTime);
             }
 
+            // notificar acceso final (si presentFrame == null la función anterior ya hizo
+            // frameAllocated)
             algorithm.pageAccessed(presentFrame == null ? -1 : presentFrame, process, pageNumber, currentTime);
             process.setLastAccessTime(currentTime);
         } finally {
@@ -202,7 +200,6 @@ public class MemoryManager {
         try {
             Set<Integer> pages = processPages.get(process);
             if (pages != null) {
-                // eliminar marcos ocupados por este proceso
                 Iterator<Map.Entry<Integer, Proceso>> it = frameToProcess.entrySet().iterator();
                 while (it.hasNext()) {
                     Map.Entry<Integer, Proceso> entry = it.next();
@@ -257,17 +254,12 @@ public class MemoryManager {
         return (totalFrames - usedFrames) >= requiredFrames;
     }
 
-    /**
-     * Asigna un frame libre a la (process,pageNumber). Devuelve índice del frame
-     * asignado o -1 si no hay espacio.
-     */
     private int allocatePage(Proceso process, int pageNumber) {
         for (int frame = 0; frame < totalFrames; frame++) {
             if (!frameToProcess.containsKey(frame)) {
                 frameToProcess.put(frame, process);
                 frameToPage.put(frame, pageNumber);
-                // actualizar estructura de algoritmo
-                algorithm.frameAllocated(frame, process, pageNumber);
+                algorithm.frameAllocated(frame, process, pageNumber); // una sola vez aquí
                 return frame;
             }
         }
@@ -275,7 +267,6 @@ public class MemoryManager {
     }
 
     private void evictPage(int frame) {
-        // eliminar el frame especificado si existe
         Proceso p = frameToProcess.remove(frame);
         frameToPage.remove(frame);
         algorithm.frameFreed(frame);

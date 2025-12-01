@@ -1,90 +1,129 @@
 package com.ossimulator.gui;
 
 import com.ossimulator.process.Proceso;
-import java.awt.BasicStroke;
+import com.ossimulator.process.Proceso.Interval;
+import com.ossimulator.simulator.OSSimulator;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.Graphics;
-import java.awt.Graphics2D;
-import java.awt.RenderingHints;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import javax.swing.JPanel;
 
 public class GanttChart extends JPanel {
-    private List<Proceso> processes;
-    private Map<String, List<Integer>> processTimelines;
-    private int currentTimeDisplayed = 0;
-    private int maxTime;
+    private OSSimulator simulator;
+    private static final int LEFT_LABEL_WIDTH = 80;
+    private static final int ROW_HEIGHT = 18;
+    private static final int ROW_SPACING = 8;
+    private static final int TICK_WIDTH = 14;
 
     public GanttChart() {
-        this.processes = new ArrayList<>();
-        this.processTimelines = new HashMap<>();
-        this.maxTime = 0;
-        setPreferredSize(new Dimension(800, 300));
-        setBackground(new Color(245, 245, 245));
+        setPreferredSize(new Dimension(900, 400));
     }
 
-    public void updateChart(List<Proceso> allProcesses, int currentTime) {
-        this.processes = new ArrayList<>(allProcesses);
-        this.maxTime = Math.max(currentTime + 10, this.maxTime);
-        this.currentTimeDisplayed = currentTime;
+    public void updateChart(OSSimulator sim) {
+        this.simulator = sim;
         repaint();
     }
 
     @Override
     protected void paintComponent(Graphics g) {
         super.paintComponent(g);
-        Graphics2D g2 = (Graphics2D) g;
-        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g.setFont(new Font("Monospaced", Font.PLAIN, 11));
 
-        int margin = 50;
-        int chartWidth = getWidth() - 2 * margin;
-        int chartHeight = getHeight() - 2 * margin;
-        int rowHeight = 40;
-
-        g2.setColor(Color.BLACK);
-        g2.setStroke(new BasicStroke(2));
-        g2.drawRect(margin, margin, chartWidth, chartHeight);
-
-        g2.setFont(new Font("Arial", Font.BOLD, 12));
-
-        for (int i = 0; i <= maxTime; i ++) {
-            int x = margin + (int) ((double) i / maxTime * chartWidth);
-            g2.drawLine(x, margin + chartHeight, x, margin + chartHeight + 5);
-            g2.drawString(String.valueOf(i), x - 10, margin + chartHeight + 20);
+        if (simulator == null) {
+            g.drawString("No simulation", 10, 20);
+            return;
         }
 
-        g2.setFont(new Font("Arial", Font.PLAIN, 11));
-        int yPos = margin + 20;
+        List<Proceso> processes = simulator.getAllProcesses();
+        int n = processes.size();
+        if (n == 0) {
+            g.drawString("No processes loaded", 10, 20);
+            return;
+        }
 
-        for (Proceso p : processes) {
-            g2.drawString(p.getPid(), 10, yPos + 15);
-            int displayEnd = (p.getEndTime() == -1) ? currentTimeDisplayed : p.getEndTime();
-            if (p.getStartTime() != -1) {
-                int startX = margin + (int) ((double) p.getStartTime() / maxTime * chartWidth);
-                int endX = margin + (int) ((double) displayEnd / maxTime * chartWidth);
-                int width = Math.max(1, endX - startX);
+        int cpuAreaTop = 10;
+        int cpuAreaHeight = (ROW_HEIGHT + ROW_SPACING) * n;
+        int ioAreaTop = cpuAreaTop + cpuAreaHeight + 40;
+        int ioAreaHeight = cpuAreaHeight;
 
-                Color color;
-                if (p.isComplete()) {
-                    color = new Color(76, 175, 80);
-                } else {
-                    color = new Color(255, 152, 0);
-                }
+        int currentTime = simulator.getCurrentTime();
+        int widthNeeded = LEFT_LABEL_WIDTH + (currentTime + 10) * TICK_WIDTH;
+        if (widthNeeded > getWidth()) {
+            setPreferredSize(new Dimension(widthNeeded, Math.max(getHeight(), ioAreaTop + ioAreaHeight + 20)));
+            revalidate();
+        }
 
-                g2.setColor(color);
-                g2.fillRect(startX, yPos, width, rowHeight - 10);
-                g2.setColor(Color.BLACK);
-                g2.drawRect(startX, yPos, width, rowHeight - 10);
+        // ticks
+        g.setColor(new Color(220, 220, 220));
+        for (int t = 0; t <= currentTime + 5; t++) {
+            int x = LEFT_LABEL_WIDTH + t * TICK_WIDTH;
+            g.drawLine(x, cpuAreaTop - 6, x, ioAreaTop + ioAreaHeight + 6);
+            if (t % 5 == 0) {
+                g.setColor(Color.DARK_GRAY);
+                g.drawString(String.valueOf(t), x + 2, cpuAreaTop - 10);
+                g.setColor(new Color(220, 220, 220));
+            }
+        }
 
-                g2.drawString(p.getPid(), startX + 5, yPos + 20);
+        // dibujar filas
+        for (int i = 0; i < n; i++) {
+            Proceso p = processes.get(i);
+            int rowY = cpuAreaTop + i * (ROW_HEIGHT + ROW_SPACING);
+
+            // etiqueta
+            g.setColor(Color.BLACK);
+            g.drawString(p.getPid(), 8, rowY + ROW_HEIGHT - 4);
+
+            // CPU intervals
+            for (Interval itv : p.getCpuIntervals()) {
+                int startTick = itv.start;
+                int endTick = itv.end; // ahora end es exclusive
+
+                int x1 = LEFT_LABEL_WIDTH + startTick * TICK_WIDTH;
+                int x2 = LEFT_LABEL_WIDTH + endTick * TICK_WIDTH;
+
+                int w = Math.max(TICK_WIDTH, x2 - x1);
+
+                g.setColor(new Color(70, 130, 180));
+                g.fillRect(x1, rowY, w, ROW_HEIGHT);
             }
 
-            yPos += rowHeight;
+            // I/O row
+            int ioRowY = ioAreaTop + i * (ROW_HEIGHT + ROW_SPACING);
+            g.setColor(Color.BLACK);
+            g.drawString(p.getPid(), 8, ioRowY + ROW_HEIGHT - 4);
+
+            for (Interval itv : p.getIoIntervals()) {
+                int startTick = itv.start;
+                int endTick = itv.end; // end exclusive
+
+                int x1 = LEFT_LABEL_WIDTH + startTick * TICK_WIDTH;
+                int x2 = LEFT_LABEL_WIDTH + endTick * TICK_WIDTH;
+
+                int w = Math.max(TICK_WIDTH, x2 - x1);
+
+                g.setColor(new Color(220, 100, 80));
+                g.fillRect(x1, ioRowY, w, ROW_HEIGHT);
+            }
+
+            // separador
+            g.setColor(new Color(180, 180, 180));
+            int sepY = rowY + ROW_HEIGHT + ROW_SPACING / 2;
+            g.drawLine(LEFT_LABEL_WIDTH, sepY, getWidth() - 10, sepY);
         }
+
+        // leyenda
+        int legendY = ioAreaTop + ioAreaHeight + 24;
+        g.setColor(new Color(70, 130, 180));
+        g.fillRect(LEFT_LABEL_WIDTH, legendY, 14, 10);
+        g.setColor(Color.BLACK);
+        g.drawString("CPU burst", LEFT_LABEL_WIDTH + 18, legendY + 10);
+
+        g.setColor(new Color(220, 100, 80));
+        g.fillRect(LEFT_LABEL_WIDTH + 120, legendY, 14, 10);
+        g.setColor(Color.BLACK);
+        g.drawString("I/O burst", LEFT_LABEL_WIDTH + 140, legendY + 10);
     }
 }
