@@ -62,6 +62,8 @@ public class LRU implements PageReplacementAlgorithm {
 
     @Override
     public void reset() {
+        System.err.println("🔥 LRU.reset() CALLED!");
+        Thread.dumpStack();
         frameLastAccessTime.clear();
     }
 }

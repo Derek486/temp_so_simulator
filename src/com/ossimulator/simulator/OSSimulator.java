@@ -415,7 +415,6 @@ public class OSSimulator {
         int totalCpu = allProcesses.stream().mapToInt(Proceso::getCPUTimeUsed).sum();
         int totalTime = currentTime;
         int totalIdle = Math.max(0, totalTime - totalCpu);
-
         metrics.setTotalCPUTime(totalCpu);
         metrics.setTotalIdleTime(totalIdle);
         metrics.setContextSwitches(contextSwitches);
