@@ -7,12 +7,16 @@ import com.ossimulator.process.Proceso;
 import com.ossimulator.process.ProcessState;
 import com.ossimulator.scheduling.RoundRobin;
 import com.ossimulator.scheduling.SchedulingAlgorithm;
+import com.ossimulator.util.Semaphore;
+
+import java.util.Iterator;
 import java.util.ArrayList;
+import java.util.LinkedList; //<-- usamos el linkedlist normal para protegerlo con el semaphore creado
 import java.util.List;
 import java.util.Queue;
-import java.util.concurrent.ConcurrentLinkedQueue;
+/*import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.locks.Condition;
-import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.ReentrantLock;*/
 
 /**
  * OSSimulator (refactor)
@@ -23,12 +27,18 @@ import java.util.concurrent.locks.ReentrantLock;
  * - Integración explícita con MemoryManager: intento de asignar páginas al
  * llegar,
  * reintento desde memoryBlockedQueue y verificación antes de ejecutar en CPU.
+ * 
+ * - Implementa sincronizacion manual con Semaphore y LinkedList en lugar de
+ *   ConcurrentLinkedQueue y ReentrantLock/Condition.
  */
 public class OSSimulator {
     private final List<Proceso> allProcesses;
-    private final Queue<Proceso> readyQueue = new ConcurrentLinkedQueue<>();
-    private final Queue<Proceso> ioQueue = new ConcurrentLinkedQueue<>();
-    private final Queue<Proceso> memoryBlockedQueue = new ConcurrentLinkedQueue<>();
+    private final Queue<Proceso> readyQueue = new LinkedList<>();
+    private final Queue<Proceso> ioQueue = new LinkedList<>();
+    private final Queue<Proceso> memoryBlockedQueue = new LinkedList<>();
+
+    private final Semaphore mutex; //<-- semaphore to protect queues (mutex)
+    private final Semaphore avaliableProcesses; //<-- semaphore to signal available processes in ready queue (sync)
 
     private final SchedulingAlgorithm scheduler;
     private final MemoryManager memoryManager;
@@ -45,8 +55,8 @@ public class OSSimulator {
 
     // Lock y condition disponibles si más adelante quieres pausar/reanudar la
     // simulación
-    private final ReentrantLock lock = new ReentrantLock();
-    private final Condition simEvent = lock.newCondition();
+    //private final ReentrantLock lock = new ReentrantLock();
+    //private final Condition simEvent = lock.newCondition();
 
     private SimulationUpdateListener updateListener;
 
@@ -77,6 +87,9 @@ public class OSSimulator {
             this.memoryManager.setEventLogger(this.eventLogger);
         }
         this.metrics = new SystemMetrics();
+
+        this.mutex = new Semaphore(1); //<--binary semaphore for mutex
+        this.avaliableProcesses = new Semaphore(0); //<-- counting semaphore for available processes in ready queue
     }
 
     // ---------- Control de simulación ----------
@@ -91,6 +104,10 @@ public class OSSimulator {
 
     public void stop() {
         isRunning = false;
+        //fake release to unblock any waiting thread
+        if (avaliableProcesses != null) {
+            avaliableProcesses.signalSemaphore();
+        }
     }
 
     // ---------- Main loop (tick-based) ----------
@@ -98,46 +115,52 @@ public class OSSimulator {
         eventLogger.log("Simulator started");
 
         while (isRunning) {
-            // actualizar tiempo en memory manager (para algoritmos que dependan de time)
-            if (memoryManager != null) {
-                memoryManager.setCurrentTime(currentTime);
-            }
-
-            // 1) Arribos
-            handleArrivals();
-
-            // Log diagnóstico por tick
-            eventLogger.log(String.format("[T=%d] Ready=%d IO=%d MemBlocked=%d Running=%s",
-                    currentTime,
-                    readyQueue.size(),
-                    ioQueue.size(),
-                    memoryBlockedQueue.size(),
-                    runningProcess == null ? "idle" : runningProcess.getPid()));
-
-            // 2) Procesar IO y memoria (no consumen CPU)
-            handleIoTick();
-            handleMemoryBlockedQueue();
-
-            // 3) Scheduler: asignar proceso si CPU libre
-            scheduleIfIdle();
-
-            // 4) Ejecutar 1 tick de CPU (si hay running)
-            executeCpuTick();
-
-            // Callback UI / listeners
-            if (updateListener != null)
-                updateListener.onUpdate();
-
-            // 5) Verificar finalización
-            if (allProcessesTerminated())
-                break;
-
-            // avanzar tiempo
-            currentTime++;
-
-            // velocidad de simulación (puedes parametrizar o quitar)
             try {
-                Thread.sleep(100);
+                // actualizar tiempo en memory manager (para algoritmos que dependan de time)
+                if (memoryManager != null) {
+                    memoryManager.setCurrentTime(currentTime);
+                }
+
+                // 1) Arribos
+                handleArrivals();
+
+                mutex.waitSemaphore(); //<-- bloqueamos el acceso a las colas
+                eventLogger.log(String.format("[T=%d] Ready=%d IO=%d MemBlocked=%d Running=%s",
+                        currentTime,
+                        readyQueue.size(),
+                        ioQueue.size(),
+                        memoryBlockedQueue.size(),
+                        runningProcess == null ? "idle" : runningProcess.getPid()));
+                mutex.signalSemaphore(); //<-- liberamos inmediatamente
+
+                // 2) Procesar IO y memoria (no consumen CPU)
+                handleIoTick();
+                handleMemoryBlockedQueue();
+
+                // 3) Scheduler: asignar proceso si CPU libre
+                scheduleIfIdle();
+
+                // 4) Ejecutar 1 tick de CPU (si hay running)
+                executeCpuTick();
+
+                // Callback UI / listeners
+                if (updateListener != null)
+                    updateListener.onUpdate();
+
+                // 5) Verificar finalización
+                if (allProcessesTerminated())
+                    break;
+
+                // avanzar tiempo
+                currentTime++;
+
+                // velocidad de simulación (puedes parametrizar o quitar)
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 break;
@@ -164,20 +187,30 @@ public class OSSimulator {
         timeSliceRemaining = 0;
     }
 
-    /** Mueve procesos cuya arrivalTime == currentTime al flujo de memoria/ready. */
-    private void handleArrivals() {
+    /** Mueve procesos cuya arrivalTime == currentTime al flujo de memoria/ready.
+     *  PRODUCE procesos para la cola de listos
+     */
+    private void handleArrivals() throws InterruptedException {
         for (Proceso p : allProcesses) {
             if (p.getArrivalTime() == currentTime && p.getState() == ProcessState.NEW) {
                 // intentar cargar sus páginas inmediatamente si hay MemoryManager
                 boolean pagesLoaded = tryLoadPagesOnArrival(p);
-                if (pagesLoaded) {
-                    p.setState(ProcessState.READY);
-                    readyQueue.add(p);
-                    eventLogger.log(p.getPid() + " arrived and moved to Ready queue");
-                } else {
-                    p.setState(ProcessState.BLOCKED_MEMORY);
-                    memoryBlockedQueue.add(p);
-                    eventLogger.log(p.getPid() + " arrived but memory not available -> MemBlocked");
+
+                mutex.waitSemaphore(); //<-- bloqueo al acceso a colas
+                try {
+                    if (pagesLoaded) {
+                        p.setState(ProcessState.READY);
+                        readyQueue.add(p);
+                        eventLogger.log(p.getPid() + " arrived and moved to Ready queue");
+
+                        avaliableProcesses.signalSemaphore(); //<-- levanta el semaphore de procesos disponibles
+                    } else {
+                        p.setState(ProcessState.BLOCKED_MEMORY);
+                        memoryBlockedQueue.add(p);
+                        eventLogger.log(p.getPid() + " arrived but memory not available -> MemBlocked");
+                    }
+                } finally {
+                    mutex.signalSemaphore(); //<-- liberamos siempre
                 }
             }
         }
@@ -197,51 +230,60 @@ public class OSSimulator {
     /**
      * Decrementa 1 tick de E/S para cada proceso en ioQueue y mueve a ready si
      * corresponde.
+     * Actua como un PRODUCTOR cuando un proceso termina IO
      */
-    private void handleIoTick() {
-        List<Proceso> snapshot = new ArrayList<>(ioQueue);
-        List<Proceso> toMove = new ArrayList<>();
+    private void handleIoTick() throws InterruptedException {
+        mutex.waitSemaphore();
+        try {
+            if(ioQueue.isEmpty()) return;
+            
+            //usamos un iterador para eliminar elementos de manera segura mientras iteramos
+            Iterator<Proceso> iterator = ioQueue.iterator();
+            boolean processesMovedToReady = false;
 
-        for (Proceso p : snapshot) {
-            if (p.getState() != ProcessState.BLOCKED_IO) {
-                // proceso inconsistente en la cola -> remover
-                toMove.add(p);
-                continue;
-            }
+            while (iterator.hasNext()) {
+                Proceso p = iterator.next();
 
-            // E/S consume 1 tick (no CPU)
-            p.decrementCurrentBurstTime(1, false);
-            eventLogger.log(String.format("%s I/O remaining=%d", p.getPid(), p.getBurstTimeRemaining()));
+                if(p.getState() != ProcessState.BLOCKED_IO) {
+                    iterator.remove(); // proceso inconsistente en la cola -> remover
+                    continue;
+                }
 
-            if (p.getBurstTimeRemaining() <= 0) {
-                // finalizar ráfaga IO
-                if (p.moveToNextBurst()) {
-                    p.endIoInterval(currentTime);
-                    p.setState(ProcessState.READY);
-                    toMove.add(p);
-                    eventLogger.log(p.getPid() + " I/O completed, moved to Ready queue");
-                } else {
-                    // terminó el proceso
-                    p.endIoInterval(currentTime);
-                    p.setState(ProcessState.TERMINATED);
-                    p.setEndTime(currentTime);
-                    metrics.addCompletedProcess(p);
-                    toMove.add(p);
-                    eventLogger.log(p.getPid() + " terminated");
-                    if (memoryManager != null)
-                        memoryManager.unloadProcessPages(p);
+                p.decrementCurrentBurstTime(1, false);
+
+                if (p.getBurstTimeRemaining() <= 0) {
+                    // finalizar ráfaga IO
+                    if (p.moveToNextBurst()) {
+                        p.endIoInterval(currentTime);
+                        p.setState(ProcessState.READY);
+                        iterator.remove();
+
+                        // lo añadimos a Ready
+                        if (!readyQueue.contains(p)) {
+                            readyQueue.add(p);
+                            processesMovedToReady = true; // marcar para avisar al scheduler
+                        }
+
+                        eventLogger.log(p.getPid() + " I/O completed, moved to Ready queue");
+                    } else {
+                        p.setState(ProcessState.TERMINATED);
+                        p.setEndTime(currentTime);
+                        metrics.addCompletedProcess(p);
+                        
+                        // lo removemos de IO inmediatamente
+                        iterator.remove();
+                        eventLogger.log(p.getPid() + " terminated in IO");
+                        if (memoryManager != null)
+                            memoryManager.unloadProcessPages(p);
+                    }
                 }
             }
-        }
-
-        // mover/remover de la cola I/O
-        for (Proceso p : toMove) {
-            ioQueue.remove(p);
-            if (p.getState() == ProcessState.READY && !readyQueue.contains(p)) {
-                // Si tiene páginas, deberá estar en ready; si no, scheduleMemoryBlocked lo
-                // manejará
-                readyQueue.add(p);
+            // Si movimos al menos uno a Ready, despertamos al Scheduler
+            if (processesMovedToReady) {
+                avaliableProcesses.signalSemaphore();
             }
+        } finally {
+            mutex.signalSemaphore();
         }
     }
 
@@ -249,11 +291,22 @@ public class OSSimulator {
      * Intentamos cargar páginas para procesos bloqueados por memoria.
      * Si lo logramos, pasan a READY.
      */
-    private void handleMemoryBlockedQueue() {
-        if (memoryManager == null || memoryBlockedQueue.isEmpty())
+    private void handleMemoryBlockedQueue() throws InterruptedException {
+        if (memoryManager == null)
             return;
 
+        mutex.waitSemaphore(); //<-- bloqueo para leer la cola memoryBlockedQueue
+        List<Proceso> snapshotBlocked;
+
+        try {
+            if (memoryBlockedQueue.isEmpty()) return;
+            snapshotBlocked = new ArrayList<>(memoryBlockedQueue);
+        } finally {
+            mutex.signalSemaphore();
+        }
+
         List<Proceso> toReady = new ArrayList<>();
+
         for (Proceso p : new ArrayList<>(memoryBlockedQueue)) {
             if (memoryManager.tryLoadProcessPages(p)) {
                 p.setState(ProcessState.READY);
@@ -267,34 +320,62 @@ public class OSSimulator {
         }
 
         // mover a ready y quitar de memoriaBlockedQueue
-        for (Proceso p : toReady) {
-            memoryBlockedQueue.remove(p);
-            if (!readyQueue.contains(p))
-                readyQueue.add(p);
+        if (!toReady.isEmpty()) {
+            mutex.waitSemaphore();
+            try {
+                for (Proceso p : toReady) {
+                    if (memoryBlockedQueue.contains(p)) { // Doble check por seguridad
+                        memoryBlockedQueue.remove(p);
+                        if (!readyQueue.contains(p)) {
+                            readyQueue.add(p);
+                            
+                            // ¡SIGNAL! Hemos movido procesos a Ready
+                            avaliableProcesses.signalSemaphore();
+                        }
+                    }
+                }
+            } finally {
+                mutex.signalSemaphore();
+            }
         }
     }
 
-    /** Si la CPU está libre, invoca al scheduler para asignar siguiente proceso. */
-    private void scheduleIfIdle() {
+    /** Si la CPU está libre, invoca al scheduler para asignar siguiente proceso.
+     *  CONSUME procesos de la cola de listos
+    */
+    private void scheduleIfIdle() throws InterruptedException{
         if (runningProcess != null && runningProcess.getState() == ProcessState.RUNNING)
             return;
-        if (readyQueue.isEmpty())
-            return;
+        
+        mutex.waitSemaphore();
+        Proceso candidate = null;
+        try {
+            if (!readyQueue.isEmpty()) {
+                candidate = scheduler.selectNextProcess(new ArrayList<>(readyQueue));
 
-        // seleccionamos del readyQueue (pasamos snapshot para preservar orden)
-        Proceso candidate = scheduler.selectNextProcess(new ArrayList<>(readyQueue));
+                if(candidate != null) {
+                    readyQueue.remove(candidate);
+                    avaliableProcesses.waitSemaphore(); //<-- consume un proceso disponible
+                }
+            }
+        } finally {
+            mutex.signalSemaphore();
+        }
+
         if (candidate == null)
             return;
-
-        // removerlo de ready
-        readyQueue.remove(candidate);
 
         // intentar cargar páginas justo antes de correr (puede haber sido expulsado
         // anteriormente)
         if (memoryManager != null && !memoryManager.tryLoadProcessPages(candidate)) {
-            candidate.setState(ProcessState.BLOCKED_MEMORY);
-            memoryBlockedQueue.add(candidate);
-            eventLogger.log(candidate.getPid() + " blocked by memory while scheduling -> MemBlocked");
+            mutex.waitSemaphore();
+            try {
+                candidate.setState(ProcessState.BLOCKED_MEMORY);
+                memoryBlockedQueue.add(candidate);
+                eventLogger.log(candidate.getPid() + " blocked by memory while scheduling -> MemBlocked");    
+            } finally {
+                mutex.signalSemaphore();
+            }
             return;
         }
 
@@ -318,7 +399,7 @@ public class OSSimulator {
     }
 
     /** Ejecuta 1 tick de CPU para runningProcess (si existe). */
-    private void executeCpuTick() {
+    private void executeCpuTick() throws InterruptedException {
         if (runningProcess == null || runningProcess.getState() != ProcessState.RUNNING)
             return;
 
@@ -349,7 +430,7 @@ public class OSSimulator {
      * Maneja la finalización de una ráfaga CPU (transición a IO, siguiente CPU o
      * terminación).
      */
-    private void handleCpuBurstCompletion() {
+    private void handleCpuBurstCompletion() throws InterruptedException {
         Burst currentBurst = runningProcess.getCurrentBurst();
         if (currentBurst == null || currentBurst.getType() != BurstType.CPU) {
             // caso extraño: no hay burst CPU actual; cerramos intervalo y liberamos CPU
@@ -386,8 +467,14 @@ public class OSSimulator {
             // cerrar CPU ya hecho; iniciar IO intervalo
             runningProcess.startIoInterval(currentTime + 1);
             runningProcess.setState(ProcessState.BLOCKED_IO);
-            if (!ioQueue.contains(runningProcess))
-                ioQueue.add(runningProcess);
+            
+            try {
+                if (!ioQueue.contains(runningProcess))
+                    ioQueue.add(runningProcess);
+            } finally {
+                mutex.signalSemaphore();
+            }
+
             eventLogger.log(runningProcess.getPid() + " blocked for I/O (duration=" + next.getDuration() + ")");
             runningProcess = null;
             return;
@@ -395,18 +482,34 @@ public class OSSimulator {
 
         // siguiente ráfaga es CPU (raro) -> poner en ready
         runningProcess.setState(ProcessState.READY);
-        if (!readyQueue.contains(runningProcess))
-            readyQueue.add(runningProcess);
+
+        mutex.waitSemaphore();
+        try {
+            if (!readyQueue.contains(runningProcess)) {
+                readyQueue.add(runningProcess);
+                avaliableProcesses.signalSemaphore(); //<-- mover a ready
+            }
+        } finally {
+            mutex.signalSemaphore();
+        }
         runningProcess = null;
     }
 
     /** Preempción por expiración de quantum (Round Robin). */
-    private void preemptForQuantumExpiry() {
+    private void preemptForQuantumExpiry() throws InterruptedException {
         runningProcess.endCpuInterval(currentTime);
         runningProcess.setState(ProcessState.READY);
-        if (!readyQueue.contains(runningProcess))
-            readyQueue.add(runningProcess);
-        eventLogger.log(runningProcess.getPid() + " quantum expired, moved to Ready queue");
+
+        mutex.waitSemaphore();
+        try {
+            if (!readyQueue.contains(runningProcess)) {
+                readyQueue.add(runningProcess);
+                eventLogger.log(runningProcess.getPid() + " quantum expired, moved to Ready queue");
+                avaliableProcesses.signalSemaphore();
+            }
+        } finally {
+            mutex.signalSemaphore();
+        }
         runningProcess = null;
     }
 
