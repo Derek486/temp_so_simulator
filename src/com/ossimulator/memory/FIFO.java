@@ -62,6 +62,8 @@ public class FIFO implements PageReplacementAlgorithm {
 
     @Override
     public void reset() {
+        System.err.println("🔥 FIFO.reset() CALLED!");
+        Thread.dumpStack();
         frameQueue.clear();
     }
 }

@@ -219,6 +219,11 @@ public class MainWindow extends JFrame {
             return;
         }
 
+        //clear previous memory state (moving it from stopSimulation to here)
+        if (this.memoryManager != null) {
+            this.memoryManager.setUpdateListener(null);
+        }
+
         List<Proceso> processes = cloneProcesses(this.loadedProcesses);
 
         SchedulingAlgorithm scheduler = createScheduler();
@@ -226,11 +231,16 @@ public class MainWindow extends JFrame {
         int memoryFrames = (int) memoryFramesSpinner.getValue();
         int quantum = (int) quantumSpinner.getValue();
 
+        // local variable to fix memory visualizer
+        final MemoryManager currentMemoryManager = new MemoryManager(memoryFrames, pageAlgorithm);
+
+        this.memoryManager = currentMemoryManager;
         // keep reference in field so updateUI / MemoryPanel can access it
-        this.memoryManager = new MemoryManager(memoryFrames, pageAlgorithm);
+        //this.memoryManager = new MemoryManager(memoryFrames, pageAlgorithm);
 
         // register memory update listener to refresh memory panel (EDT)
-        this.memoryManager
+        //this.memoryManager
+        currentMemoryManager
                 .setUpdateListener(() -> SwingUtilities.invokeLater(() -> memoryPanel.updateData(this.memoryManager)));
 
         simulator = new OSSimulator(processes, scheduler, this.memoryManager, quantum);
@@ -250,7 +260,8 @@ public class MainWindow extends JFrame {
         simulator.getEventLogger().addListener(event -> SwingUtilities.invokeLater(() -> logArea.append(event + "\n")));
 
         // initial UI refresh so memory table shows initial state
-        memoryPanel.updateData(this.memoryManager);
+        //memoryPanel.updateData(this.memoryManager);
+        memoryPanel.updateData(currentMemoryManager);
 
         simulationRunning = true;
         startButton.setEnabled(false);
@@ -264,7 +275,7 @@ public class MainWindow extends JFrame {
             simulator = null; // forzar nueva instancia en next start
         }
         // clear memory manager reference so next run will recreate it
-        this.memoryManager = null;
+        //this.memoryManager = null; <-- do not clear memory during stop
         simulationRunning = false;
         startButton.setEnabled(true);
         stopButton.setEnabled(false);
