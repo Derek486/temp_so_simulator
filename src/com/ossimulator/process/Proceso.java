@@ -255,14 +255,16 @@ public class Proceso implements Comparable<Proceso> {
         if (startTime == -1 || endTime == -1) {
             return 0;
         }
-        return (endTime - startTime) - cpuTimeUsed;
+        int waiting = (endTime - startTime) - cpuTimeUsed;
+        return Math.max(0, waiting);
     }
 
     public int getTurnaroundTime() {
         if (startTime == -1 || endTime == -1) {
             return 0;
         }
-        return endTime - startTime;
+        int tr = endTime - startTime;
+        return Math.max(0, tr);
     }
 
     public int getContextSwitches() {
