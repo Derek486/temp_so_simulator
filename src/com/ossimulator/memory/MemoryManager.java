@@ -2,6 +2,8 @@ package com.ossimulator.memory;
 
 import com.ossimulator.process.Proceso;
 import com.ossimulator.simulator.EventLogger;
+import com.ossimulator.util.Semaphore;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -9,8 +11,6 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.locks.Condition;
-import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * MemoryManager con notificaciones (MemoryUpdateListener) para UI.
@@ -24,6 +24,8 @@ import java.util.concurrent.locks.ReentrantLock;
  * permitir
  * representar una columna por referencia lógica en la UI (hit/miss/evict
  * alineados).
+ * 
+ * - Utiliza la clase Sempahore creada para sincronizacion
  */
 public class MemoryManager {
     private final int totalFrames;
@@ -44,8 +46,7 @@ public class MemoryManager {
     private int totalReplacements = 0;
     private int currentTime = 0;
 
-    private final ReentrantLock lock = new ReentrantLock();
-    private final Condition memoryAvailable = lock.newCondition();
+    private final Semaphore mutex; // <-- semaphore for mutual exclusion
 
     // historial por frame: frameIndex -> lista de AccessEvent (append-only)
     private final Map<Integer, List<AccessEvent>> frameAccessHistory = new HashMap<>();
@@ -62,6 +63,7 @@ public class MemoryManager {
         this.frameToProcess = new HashMap<>();
         this.frameToPage = new HashMap<>();
         this.processPages = new HashMap<>();
+        this.mutex = new Semaphore(1); // <-- the first who call it gets the permit
     }
 
     /** Inyecta el logger del simulador para centralizar trazas. */
@@ -70,12 +72,12 @@ public class MemoryManager {
     }
 
     /** Actualiza tiempo (para algoritmos que lo requieran). */
-    public void setCurrentTime(int time) {
-        lock.lock();
+    public void setCurrentTime(int time) throws InterruptedException{
+        mutex.waitSemaphore(); // <-- remplaza lock.lock()
         try {
             this.currentTime = time;
         } finally {
-            lock.unlock();
+            mutex.signalSemaphore(); // <-- remplaza lock.unlock()
         }
     }
 
@@ -122,28 +124,28 @@ public class MemoryManager {
      * Getter público del máximo seq observado (snapshot thread-safe).
      * Útil para la UI horizontal scale.
      */
-    public long getMaxAccessSequence() {
-        lock.lock();
+    public long getMaxAccessSequence() throws InterruptedException {
+        mutex.waitSemaphore();
         try {
             return this.accessSequence;
         } finally {
-            lock.unlock();
+            mutex.signalSemaphore();
         }
     }
 
     // getter thread-safe para currentTime
-    public int getCurrentTime() {
-        lock.lock();
+    public int getCurrentTime() throws InterruptedException {
+        mutex.waitSemaphore();
         try {
             return this.currentTime;
         } finally {
-            lock.unlock();
+            mutex.signalSemaphore();
         }
     }
 
     // snapshot seguro del historial (deep copy de listas)
-    public Map<Integer, List<AccessEvent>> getFrameAccessHistorySnapshot() {
-        lock.lock();
+    public Map<Integer, List<AccessEvent>> getFrameAccessHistorySnapshot() throws InterruptedException {
+        mutex.waitSemaphore();
         try {
             Map<Integer, List<AccessEvent>> snap = new HashMap<>();
             for (Map.Entry<Integer, List<AccessEvent>> e : frameAccessHistory.entrySet()) {
@@ -151,7 +153,7 @@ public class MemoryManager {
             }
             return snap;
         } finally {
-            lock.unlock();
+            mutex.signalSemaphore();
         }
     }
 
@@ -168,77 +170,55 @@ public class MemoryManager {
      * Realiza expulsiones (invocando al algoritmo) si es necesario.
      * Devuelve true si pudo asignarlas todas, false si no hay forma de liberarlas.
      */
-    public boolean tryLoadProcessPages(Proceso process) {
+    public boolean tryLoadProcessPages(Proceso process) throws InterruptedException {
         if (process == null)
             return false;
-        lock.lock();
+
+        mutex.waitSemaphore();
         try {
-            int needed = process.getPageCount();
+            // int needed = process.getPageCount(); <-- original line
             // if process already has pages loaded, treat as success
             Set<Integer> existing = processPages.get(process);
-            if (existing != null && existing.size() >= needed) {
+            if (existing != null && existing.isEmpty()) {
                 return true;
             }
 
-            int free = totalFrames - frameToProcess.size();
-            int attempts = 0;
-            // Evict frames until we have enough free frames or we tried enough times
-            while (free < needed && attempts < totalFrames) {
-                boolean freed = tryEvictOneFrame(); // legacy call — allocates its own seq internally
-                if (!freed)
-                    break;
-                free = totalFrames - frameToProcess.size();
-                attempts++;
-            }
+            int needed = 1; // <-- modified to ask for only one page at the beginning
 
-            if ((totalFrames - frameToProcess.size()) < needed) {
-                if (eventLogger != null) {
-                    eventLogger.log(process.getPid() + " cannot allocate pages now (freeFrames=" + getFreeFrames()
-                            + ", needed=" + needed + ")");
+            // verify if we have enough frames now
+            if (getFreeFramesInternal() < needed) {
+                boolean freed = tryEvictOneFrame();
+
+                if(!freed) {
+                    if (eventLogger != null) {
+                        eventLogger.log(process.getPid() + " cannot allocate initial page (RAM full)");
+                    }
+                    return false;
                 }
-                return false;
             }
 
             // allocate frames for all pages (simple: put pages into any free frames)
             Set<Integer> pagesSet = processPages.computeIfAbsent(process, k -> new HashSet<>());
-            boolean allocatedAny = false;
-            for (int page = 0; page < needed; page++) {
-                if (!pagesSet.contains(page)) {
-                    int frame = allocatePage(process, page); // legacy allocate (will create its own seq)
-                    if (frame >= 0) {
-                        pagesSet.add(page);
-                        allocatedAny = true;
-                        if (eventLogger != null) {
-                            eventLogger.log(
-                                    "Loaded page for " + process.getPid() + " page=" + page + " -> frame=" + frame);
-                        }
-                    } else {
-                        // shouldn't happen, but if it does, roll-back allocation of pages we added
-                        for (Iterator<Integer> it = pagesSet.iterator(); it.hasNext();) {
-                            int pnum = it.next();
-                            Integer f = findFrameFor(process, pnum);
-                            if (f != null) {
-                                evictFrame(f); // legacy evictFrame uses its own seq
-                            }
-                            it.remove();
-                        }
-                        processPages.remove(process);
-                        return false;
-                    }
+            int pageZero = 0; // <-- only allocate page 0
+
+            int frame = allocatePage(process, pageZero);
+
+            if (frame >= 0) {
+                pagesSet.add(pageZero);
+                
+                if (eventLogger != null) {
+                    eventLogger.log("Loaded initial page for " + process.getPid() + " page=" + pageZero + " -> frame=" + frame);
                 }
-            }
-
-            // notify UI if we changed frames
-            if (allocatedAny) {
+                
+                // notify UI
                 notifyUpdate();
+                return true;
+            } else {
+                // could not allocate even after eviction
+                return false;
             }
-
-            if (eventLogger != null) {
-                eventLogger.log("Loaded all pages for " + process.getPid() + " (pages=" + needed + ")");
-            }
-            return true;
         } finally {
-            lock.unlock();
+            mutex.signalSemaphore();
         }
     }
 
@@ -252,10 +232,11 @@ public class MemoryManager {
      * generados
      * por esta referencia se registran con esa misma seq para alinearse en la UI.
      */
-    public void accessPage(Proceso process, int pageNumber) {
+    public void accessPage(Proceso process, int pageNumber) throws InterruptedException {
         if (process == null)
             return;
-        lock.lock();
+        
+        mutex.waitSemaphore();
         try {
             // generar secuencia única para esta referencia
             long seq = nextAccessSeq();
@@ -306,17 +287,18 @@ public class MemoryManager {
             }
             process.setLastAccessTime(currentTime);
         } finally {
-            lock.unlock();
+            mutex.signalSemaphore();
         }
     }
 
     /**
      * Descarga todas las páginas pertenecientes a un proceso (por terminación).
      */
-    public void unloadProcessPages(Proceso process) {
+    public void unloadProcessPages(Proceso process) throws InterruptedException {
         if (process == null)
             return;
-        lock.lock();
+        
+        mutex.waitSemaphore();
         try {
             boolean changed = false;
             Set<Integer> pages = processPages.get(process);
@@ -347,7 +329,7 @@ public class MemoryManager {
                 }
                 processPages.remove(process);
             }
-            memoryAvailable.signalAll();
+            // memoryAvailable.signalAll(); <-- no necesitamos, el hilo verifica si hay frames libres
             if (eventLogger != null) {
                 eventLogger.log("Unloaded pages for " + process.getPid());
             }
@@ -355,36 +337,41 @@ public class MemoryManager {
                 notifyUpdate();
             }
         } finally {
-            lock.unlock();
+            mutex.signalSemaphore();
         }
     }
 
+    // creamos un metodo privado para uso interno que no usa mutex
+    private int getFreeFramesInternal() {
+        return totalFrames - frameToProcess.size();
+    }
+
     /** Devuelve el número de frames libres actualmente. */
-    public int getFreeFrames() {
-        lock.lock();
+    public int getFreeFrames() throws InterruptedException {
+        mutex.waitSemaphore();
         try {
-            return totalFrames - frameToProcess.size();
+            return getFreeFramesInternal();
         } finally {
-            lock.unlock();
+            mutex.signalSemaphore();
         }
     }
 
     /** Estadísticas */
-    public int getTotalPageFaults() {
-        lock.lock();
+    public int getTotalPageFaults() throws InterruptedException {
+        mutex.waitSemaphore();
         try {
             return totalPageFaults;
         } finally {
-            lock.unlock();
+            mutex.signalSemaphore();
         }
     }
 
-    public int getTotalReplacements() {
-        lock.lock();
+    public int getTotalReplacements() throws InterruptedException {
+        mutex.waitSemaphore();
         try {
             return totalReplacements;
         } finally {
-            lock.unlock();
+            mutex.signalSemaphore();
         }
     }
 
@@ -393,8 +380,8 @@ public class MemoryManager {
         return totalFrames;
     }
 
-    public Map<Integer, Proceso> getFrameStatus() {
-        lock.lock();
+    public Map<Integer, Proceso> getFrameStatus() throws InterruptedException {
+        mutex.waitSemaphore();
         try {
             Map<Integer, Proceso> snap = new HashMap<>(frameToProcess);
             for (Map.Entry<Integer, Proceso> e : terminatedFrameToProcess.entrySet()) {
@@ -402,12 +389,12 @@ public class MemoryManager {
             }
             return snap;
         } finally {
-            lock.unlock();
+            mutex.signalSemaphore();
         }
     }
 
-    public Map<Integer, Integer> getFrameToPageMap() {
-        lock.lock();
+    public Map<Integer, Integer> getFrameToPageMap() throws InterruptedException {
+        mutex.waitSemaphore();
         try {
             Map<Integer, Integer> snap = new HashMap<>(frameToPage);
             for (Map.Entry<Integer, Integer> e : terminatedFrameToPage.entrySet()) {
@@ -415,7 +402,7 @@ public class MemoryManager {
             }
             return snap;
         } finally {
-            lock.unlock();
+            mutex.signalSemaphore();
         }
     }
 
@@ -443,38 +430,30 @@ public class MemoryManager {
         Proceso victim = frameToProcess.get(frameToReplace);
         Integer victimPage = frameToPage.get(frameToReplace);
 
-        if (victim != null && victimPage != null) {
+        if(victim != null && victimPage != null) {
             Set<Integer> pages = processPages.get(victim);
             if (pages != null)
                 pages.remove(victimPage);
-            frameToProcess.remove(frameToReplace);
-            frameToPage.remove(frameToReplace);
-
-            algorithm.frameFreed(frameToReplace);
-            totalReplacements++;
-            if (eventLogger != null) {
-                eventLogger.log("Evicted frame " + frameToReplace + " (process=" + victim.getPid() + ", page="
-                        + victimPage + ")");
-            }
-            // registrar eviction con seq
-            recordFrameAccessEvent(frameToReplace,
-                    new AccessEvent(seq, currentTime, victimPage, false, "evict"));
-            notifyUpdate();
-            memoryAvailable.signalAll();
-            return true;
-        } else {
-            // limpiar el frame de todas formas
-            frameToProcess.remove(frameToReplace);
-            frameToPage.remove(frameToReplace);
-            algorithm.frameFreed(frameToReplace);
-            totalReplacements++;
-            // registrar eviction sin page
-            recordFrameAccessEvent(frameToReplace,
-                    new AccessEvent(seq, currentTime, -1, false, "evict"));
-            notifyUpdate();
-            memoryAvailable.signalAll();
-            return true;
         }
+
+        frameToProcess.remove(frameToReplace);
+        frameToPage.remove(frameToReplace);
+
+        // notify algorithm
+        algorithm.frameFreed(frameToReplace);
+        totalReplacements++;
+
+        if (eventLogger != null) {
+            eventLogger.log("Evicted frame " + frameToReplace + " (process=" + victim.getPid() + ", page="
+                    + victimPage + ")");
+        }
+
+        // registrar eviction con seq
+        recordFrameAccessEvent(frameToReplace,
+                new AccessEvent(seq, currentTime, victimPage, false, "evict"));
+        notifyUpdate();
+
+        return true;
     }
 
     /**
@@ -502,44 +481,6 @@ public class MemoryManager {
             }
         }
         return -1;
-    }
-
-    /**
-     * Encuentra el frame que contiene (process,pageNumber) si existe, null si no.
-     */
-    private Integer findFrameFor(Proceso process, int pageNumber) {
-        for (Map.Entry<Integer, Integer> e : frameToPage.entrySet()) {
-            int f = e.getKey();
-            int pnum = e.getValue();
-            if (pnum == pageNumber && frameToProcess.get(f) == process) {
-                return f;
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Fuerza la expulsión de un frame concreto (sin notificar página específica).
-     * Esta versión legacy genera su propia seq para registrar el evento.
-     */
-    private void evictFrame(int frame) {
-        long seq = nextAccessSeq();
-        evictFrame(frame, seq);
-    }
-
-    /**
-     * Fuerza la expulsión de un frame concreto y registra con seq.
-     */
-    private void evictFrame(int frame, long seq) {
-        Proceso p = frameToProcess.remove(frame);
-        Integer pg = frameToPage.remove(frame);
-        algorithm.frameFreed(frame);
-        totalReplacements++;
-        if (eventLogger != null) {
-            eventLogger.log("Force-evicted frame " + frame + " (process=" + (p != null ? p.getPid() : "null") + ")");
-        }
-        recordFrameAccessEvent(frame, new AccessEvent(seq, currentTime, (pg == null ? -1 : pg), false, "force-evict"));
-        notifyUpdate();
     }
 
     // ---------- Memory update listener support ----------
@@ -575,22 +516,23 @@ public class MemoryManager {
      * Activar para que los frames de procesos terminados se conserven en el
      * snapshot.
      */
-    public void setPreserveFramesOnProcessTermination(boolean preserve) {
-        lock.lock();
+    public void setPreserveFramesOnProcessTermination(boolean preserve) throws InterruptedException {
+        // usamos mutex para garantizar visibilidad de memoria entre hilos
+        mutex.waitSemaphore();
         try {
             this.preserveFramesOnProcessTermination = preserve;
         } finally {
-            lock.unlock();
+            mutex.signalSemaphore();
         }
     }
 
     /** Comprueba si está activo el modo preserve */
-    public boolean isPreserveFramesOnProcessTermination() {
-        lock.lock();
+    public boolean isPreserveFramesOnProcessTermination() throws InterruptedException {
+        mutex.waitSemaphore();
         try {
             return this.preserveFramesOnProcessTermination;
         } finally {
-            lock.unlock();
+            mutex.signalSemaphore();
         }
     }
 }

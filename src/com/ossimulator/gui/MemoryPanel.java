@@ -59,25 +59,30 @@ public class MemoryPanel extends JPanel {
      */
     public void updateData(MemoryManager memoryManager) {
         if (memoryManager != null) {
-            tableModel.setRowCount(0);
+            try {
+                tableModel.setRowCount(0);
 
-            // snapshot thread-safe
-            Map<Integer, Proceso> frames = memoryManager.getFrameStatus();
-            Map<Integer, Integer> frameToPage = memoryManager.getFrameToPageMap();
+                // snapshot thread-safe
+                Map<Integer, Proceso> frames = memoryManager.getFrameStatus();
+                Map<Integer, Integer> frameToPage = memoryManager.getFrameToPageMap();
 
-            int totalFrames = memoryManager.getTotalFrames();
+                int totalFrames = memoryManager.getTotalFrames();
 
-            for (int i = 0; i < totalFrames; i++) {
-                Proceso p = frames.get(i); // puede ser null => frame libre
-                Integer page = frameToPage.get(i); // puede ser null
-                String procName = (p != null) ? p.getPid() : "Free";
-                String pageStr = (page != null) ? String.valueOf(page) : "-";
-                Object[] row = { i, procName, pageStr };
-                tableModel.addRow(row);
+                for (int i = 0; i < totalFrames; i++) {
+                    Proceso p = frames.get(i); // puede ser null => frame libre
+                    Integer page = frameToPage.get(i); // puede ser null
+                    String procName = (p != null) ? p.getPid() : "Free";
+                    String pageStr = (page != null) ? String.valueOf(page) : "-";
+                    Object[] row = { i, procName, pageStr };
+                    tableModel.addRow(row);
+                }
+
+                pageFaultsLabel.setText("Page Faults: " + memoryManager.getTotalPageFaults());
+                replacementsLabel.setText("Replacements: " + memoryManager.getTotalReplacements());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
             }
-
-            pageFaultsLabel.setText("Page Faults: " + memoryManager.getTotalPageFaults());
-            replacementsLabel.setText("Replacements: " + memoryManager.getTotalReplacements());
         } else {
             tableModel.setRowCount(0);
             pageFaultsLabel.setText("Page Faults: 0");

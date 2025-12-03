@@ -220,7 +220,7 @@ public class OSSimulator {
      * Intenta cargar las páginas de un proceso en memoria (no bloqueante).
      * Si memoryManager es null devolvemos true (no simulamos VM).
      */
-    private boolean tryLoadPagesOnArrival(Proceso p) {
+    private boolean tryLoadPagesOnArrival(Proceso p) throws InterruptedException {
         if (memoryManager == null)
             return true;
         // tryLoadProcessPages es no-bloqueante según tu implementación
@@ -528,10 +528,14 @@ public class OSSimulator {
         // --- NUEVO: loggear estadísticas de memoria para debug y asegurar visibilidad
         // ---
         if (memoryManager != null) {
-            eventLogger.log(String.format("Memory stats: PageFaults=%d Replacements=%d FreeFrames=%d",
-                    memoryManager.getTotalPageFaults(),
-                    memoryManager.getTotalReplacements(),
-                    memoryManager.getFreeFrames()));
+            try {
+                eventLogger.log(String.format("Memory stats: PageFaults=%d Replacements=%d FreeFrames=%d",
+                        memoryManager.getTotalPageFaults(),
+                        memoryManager.getTotalReplacements(),
+                        memoryManager.getFreeFrames()));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
         }
 
         eventLogger.log("Simulation complete");

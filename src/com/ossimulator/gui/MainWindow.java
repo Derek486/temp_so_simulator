@@ -235,7 +235,15 @@ public class MainWindow extends JFrame {
         final MemoryManager currentMemoryManager = new MemoryManager(memoryFrames, pageAlgorithm);
 
         this.memoryManager = currentMemoryManager;
-        currentMemoryManager.setPreserveFramesOnProcessTermination(true);
+
+        // envolvemos en un bloque trycatch
+        try {
+            currentMemoryManager.setPreserveFramesOnProcessTermination(true);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return;
+        }
+        
         currentMemoryManager
                 .setUpdateListener(() -> SwingUtilities.invokeLater(() -> memoryPanel.updateData(this.memoryManager)));
 
