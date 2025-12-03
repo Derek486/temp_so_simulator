@@ -70,30 +70,34 @@ public class MemoryVisualizerPanel extends JPanel {
       return;
     }
 
-    // snapshot: frames + pages + history
-    Map<Integer, Proceso> frames = memoryManager.getFrameStatus();
-    Map<Integer, Integer> framePages = memoryManager.getFrameToPageMap();
-    Map<Integer, List<AccessEvent>> history = memoryManager.getFrameAccessHistorySnapshot();
-    int totalFrames = memoryManager.getTotalFrames();
-    int currentTime = memoryManager.getCurrentTime();
-    long maxSeq = memoryManager.getMaxAccessSequence();
+    try {
+      // snapshot: frames + pages + history
+      Map<Integer, Proceso> frames = memoryManager.getFrameStatus();
+      Map<Integer, Integer> framePages = memoryManager.getFrameToPageMap();
+      Map<Integer, List<AccessEvent>> history = memoryManager.getFrameAccessHistorySnapshot();
+      int totalFrames = memoryManager.getTotalFrames();
+      int currentTime = memoryManager.getCurrentTime();
+      long maxSeq = memoryManager.getMaxAccessSequence();
 
-    // tabla rows
-    tableModel.setRowCount(0);
-    for (int i = 0; i < totalFrames; i++) {
-      Proceso p = frames.get(i);
-      Integer pg = framePages.get(i);
-      String pname = (p != null) ? p.getPid() : "Free";
-      String pstr = (pg == null || pg < 0) ? "-" : String.valueOf(pg);
-      tableModel.addRow(new Object[] { i, pname, pstr });
+      // tabla rows
+      tableModel.setRowCount(0);
+      for (int i = 0; i < totalFrames; i++) {
+        Proceso p = frames.get(i);
+        Integer pg = framePages.get(i);
+        String pname = (p != null) ? p.getPid() : "Free";
+        String pstr = (pg == null || pg < 0) ? "-" : String.valueOf(pg);
+        tableModel.addRow(new Object[] { i, pname, pstr });
+      }
+
+      pageFaultsLabel.setText("Page Faults: " + memoryManager.getTotalPageFaults());
+      replacementsLabel.setText("Replacements: " + memoryManager.getTotalReplacements());
+
+      canvas.setSnapshot(history, maxSeq, currentTime);
+      canvas.revalidate();
+      canvas.repaint();
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
     }
-
-    pageFaultsLabel.setText("Page Faults: " + memoryManager.getTotalPageFaults());
-    replacementsLabel.setText("Replacements: " + memoryManager.getTotalReplacements());
-
-    canvas.setSnapshot(history, maxSeq, currentTime);
-    canvas.revalidate();
-    canvas.repaint();
   }
 
   // --------- Inner canvas class that paints the gantt-like view using seq
