@@ -79,15 +79,23 @@ public class GanttChart extends JPanel {
             // CPU intervals
             for (Interval itv : p.getCpuIntervals()) {
                 int startTick = itv.start;
-                int endTick = itv.end; // ahora end es exclusive
+                int endTick = itv.end; // end exclusive
+
+                if (endTick <= startTick)
+                    continue; // seguridad
 
                 int x1 = LEFT_LABEL_WIDTH + startTick * TICK_WIDTH;
-                int x2 = LEFT_LABEL_WIDTH + endTick * TICK_WIDTH;
+                int width = (endTick - startTick) * TICK_WIDTH; // ancho exacto por ticks
 
-                int w = Math.max(TICK_WIDTH, x2 - x1);
+                // opcional estético: no tapar la línea del tick derecho
+                if (width > 1)
+                    width = width - 1;
 
                 g.setColor(new Color(70, 130, 180));
-                g.fillRect(x1, rowY, w, ROW_HEIGHT);
+                g.fillRect(x1, rowY, width, ROW_HEIGHT);
+                // borde para mejor legibilidad
+                g.setColor(Color.BLACK);
+                g.drawRect(x1, rowY, Math.max(0, width - 1), ROW_HEIGHT - 1);
             }
 
             // I/O row
@@ -99,13 +107,18 @@ public class GanttChart extends JPanel {
                 int startTick = itv.start;
                 int endTick = itv.end; // end exclusive
 
-                int x1 = LEFT_LABEL_WIDTH + startTick * TICK_WIDTH;
-                int x2 = LEFT_LABEL_WIDTH + endTick * TICK_WIDTH;
+                if (endTick <= startTick)
+                    continue;
 
-                int w = Math.max(TICK_WIDTH, x2 - x1);
+                int x1 = LEFT_LABEL_WIDTH + startTick * TICK_WIDTH;
+                int width = (endTick - startTick) * TICK_WIDTH;
+                if (width > 1)
+                    width = width - 1;
 
                 g.setColor(new Color(220, 100, 80));
-                g.fillRect(x1, ioRowY, w, ROW_HEIGHT);
+                g.fillRect(x1, ioRowY, width, ROW_HEIGHT);
+                g.setColor(Color.BLACK);
+                g.drawRect(x1, ioRowY, Math.max(0, width - 1), ROW_HEIGHT - 1);
             }
 
             // separador

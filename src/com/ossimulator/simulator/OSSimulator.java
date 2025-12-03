@@ -36,6 +36,9 @@ public class OSSimulator {
     private final Queue<Proceso> ioQueue = new LinkedList<>();
     private final Queue<Proceso> memoryBlockedQueue = new LinkedList<>();
 
+    // Nueva: procesos que terminan I/O en el tick "t" y deben ser elegibles en t+1
+    private final Queue<Proceso> readyNextTick = new LinkedList<>();
+
     private final Semaphore mutex; // <-- semaphore to protect queues (mutex)
     private final Semaphore avaliableProcesses; // <-- semaphore to signal available processes in ready queue (sync)
 
@@ -142,6 +145,28 @@ public class OSSimulator {
                 // 4) Ejecutar 1 tick de CPU (si hay running)
                 executeCpuTick();
 
+                // === flush readyNextTick => readyQueue (hacerlo antes de notificar a UI y
+                // antes de avanzar tiempo)
+                if (!readyNextTick.isEmpty()) {
+                    mutex.waitSemaphore();
+                    try {
+                        int moved = 0;
+                        for (Proceso p : new ArrayList<>(readyNextTick)) {
+                            if (!readyQueue.contains(p)) {
+                                readyQueue.add(p);
+                                moved++;
+                            }
+                        }
+                        readyNextTick.clear();
+                        // signal the scheduler 'moved' times
+                        for (int s = 0; s < moved; s++) {
+                            avaliableProcesses.signalSemaphore();
+                        }
+                    } finally {
+                        mutex.signalSemaphore();
+                    }
+                }
+
                 // Callback UI / listeners
                 if (updateListener != null)
                     updateListener.onUpdate();
@@ -180,6 +205,7 @@ public class OSSimulator {
         readyQueue.clear();
         ioQueue.clear();
         memoryBlockedQueue.clear();
+        readyNextTick.clear();
         runningProcess = null;
         currentTime = 0;
         contextSwitches = 0;
@@ -231,6 +257,11 @@ public class OSSimulator {
      * Decrementa 1 tick de E/S para cada proceso en ioQueue y mueve a ready si
      * corresponde.
      * Actua como un PRODUCTOR cuando un proceso termina IO
+     *
+     * Ahora: los procesos que terminan I/O en tick t se programan para ser
+     * elegibles
+     * en el tick t+1 -> se añaden a readyNextTick en vez de readyQueue
+     * directamente.
      */
     private void handleIoTick() throws InterruptedException {
         mutex.waitSemaphore();
@@ -259,13 +290,13 @@ public class OSSimulator {
                         p.setState(ProcessState.READY);
                         iterator.remove();
 
-                        // lo añadimos a Ready
-                        if (!readyQueue.contains(p)) {
-                            readyQueue.add(p);
-                            processesMovedToReady = true; // marcar para avisar al scheduler
+                        // lo añadimos a readyNextTick (será trasladado a readyQueue en el flush)
+                        if (!readyNextTick.contains(p)) {
+                            readyNextTick.add(p);
+                            processesMovedToReady = true; // marcar para debug/registro si lo deseas
                         }
 
-                        eventLogger.log(p.getPid() + " I/O completed, moved to Ready queue");
+                        eventLogger.log(p.getPid() + " I/O completed, scheduled to move to Ready next tick");
                     } else {
                         p.setState(ProcessState.TERMINATED);
                         p.setEndTime(currentTime);
@@ -279,10 +310,8 @@ public class OSSimulator {
                     }
                 }
             }
-            // Si movimos al menos uno a Ready, despertamos al Scheduler
-            if (processesMovedToReady) {
-                avaliableProcesses.signalSemaphore();
-            }
+            // NOTA: ya no despertamos al scheduler aquí (evitar scheduling en el mismo
+            // tick)
         } finally {
             mutex.signalSemaphore();
         }
@@ -471,6 +500,8 @@ public class OSSimulator {
             runningProcess.startIoInterval(currentTime + 1);
             runningProcess.setState(ProcessState.BLOCKED_IO);
 
+            // proteger la modificación de ioQueue con mutex
+            mutex.waitSemaphore();
             try {
                 if (!ioQueue.contains(runningProcess))
                     ioQueue.add(runningProcess);
