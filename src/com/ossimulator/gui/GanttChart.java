@@ -10,17 +10,38 @@ import java.awt.Graphics;
 import java.util.List;
 import javax.swing.JPanel;
 
+/**
+ * GanttChart
+ *
+ * Componente Swing que pinta un diagrama tipo Gantt dividido en dos zonas:
+ * - CPU Gantt: muestra las ráfagas de CPU por proceso.
+ * - I/O Gantt: muestra las ráfagas de E/S por proceso.
+ *
+ * Esta clase mantiene solo la referencia al simulador (lectura),
+ * calcula tamaño dinámico según el tiempo actual y dibuja las barras por
+ * intervalos. No muta el simulador.
+ */
 public class GanttChart extends JPanel {
+    private static final long serialVersionUID = 1L;
+
     private OSSimulator simulator;
+
     private static final int LEFT_LABEL_WIDTH = 80;
     private static final int ROW_HEIGHT = 18;
     private static final int ROW_SPACING = 8;
     private static final int TICK_WIDTH = 14;
+    private static final int MARGIN_RIGHT = 20;
 
     public GanttChart() {
         setPreferredSize(new Dimension(900, 400));
     }
 
+    /**
+     * Actualiza la referencia al simulador y fuerza repintado.
+     * Debe llamarse desde EDT (SwingUtilities.invokeLater) cuando provenga de hilos.
+     *
+     * @param sim instancia del simulador (puede ser null para limpiar la vista)
+     */
     public void updateChart(OSSimulator sim) {
         this.simulator = sim;
         repaint();
@@ -37,25 +58,30 @@ public class GanttChart extends JPanel {
         }
 
         List<Proceso> processes = simulator.getAllProcesses();
-        int n = processes.size();
-        if (n == 0) {
+        if (processes == null || processes.isEmpty()) {
             g.drawString("No processes loaded", 10, 20);
             return;
         }
 
-        int cpuAreaTop = 10;
-        int cpuAreaHeight = (ROW_HEIGHT + ROW_SPACING) * n;
-        int ioAreaTop = cpuAreaTop + cpuAreaHeight + 40;
-        int ioAreaHeight = cpuAreaHeight;
+        final int n = processes.size();
+        final int cpuAreaTop = 10;
+        final int cpuAreaHeight = (ROW_HEIGHT + ROW_SPACING) * n;
+        final int ioAreaTop = cpuAreaTop + cpuAreaHeight + 40;
+        final int ioAreaHeight = cpuAreaHeight;
 
-        int currentTime = simulator.getCurrentTime();
-        int widthNeeded = LEFT_LABEL_WIDTH + (currentTime + 10) * TICK_WIDTH;
+        final int currentTime = simulator.getCurrentTime();
+        final int widthNeeded = LEFT_LABEL_WIDTH + (currentTime + 10) * TICK_WIDTH + MARGIN_RIGHT;
         if (widthNeeded > getWidth()) {
-            setPreferredSize(new Dimension(widthNeeded, Math.max(getHeight(), ioAreaTop + ioAreaHeight + 20)));
+            setPreferredSize(new Dimension(widthNeeded, Math.max(getHeight(), ioAreaTop + ioAreaHeight + 40)));
             revalidate();
         }
 
-        // ticks
+        drawTicks(g, currentTime, cpuAreaTop, ioAreaTop, ioAreaHeight);
+        drawProcessRows(g, processes, cpuAreaTop, ioAreaTop);
+        drawLegend(g, ioAreaTop + ioAreaHeight + 24);
+    }
+
+    private void drawTicks(Graphics g, int currentTime, int cpuAreaTop, int ioAreaTop, int ioAreaHeight) {
         g.setColor(new Color(220, 220, 220));
         for (int t = 0; t <= currentTime + 5; t++) {
             int x = LEFT_LABEL_WIDTH + t * TICK_WIDTH;
@@ -66,69 +92,47 @@ public class GanttChart extends JPanel {
                 g.setColor(new Color(220, 220, 220));
             }
         }
+    }
 
-        // dibujar filas
-        for (int i = 0; i < n; i++) {
+    private void drawProcessRows(Graphics g, List<Proceso> processes, int cpuAreaTop, int ioAreaTop) {
+        for (int i = 0; i < processes.size(); i++) {
             Proceso p = processes.get(i);
             int rowY = cpuAreaTop + i * (ROW_HEIGHT + ROW_SPACING);
 
-            // etiqueta
             g.setColor(Color.BLACK);
             g.drawString(p.getPid(), 8, rowY + ROW_HEIGHT - 4);
 
-            // CPU intervals
-            for (Interval itv : p.getCpuIntervals()) {
-                int startTick = itv.start;
-                int endTick = itv.end; // end exclusive
+            drawIntervals(g, p.getCpuIntervals(), rowY, new Color(70, 130, 180));
 
-                if (endTick <= startTick)
-                    continue; // seguridad
-
-                int x1 = LEFT_LABEL_WIDTH + startTick * TICK_WIDTH;
-                int width = (endTick - startTick) * TICK_WIDTH; // ancho exacto por ticks
-
-                // opcional estético: no tapar la línea del tick derecho
-                if (width > 1)
-                    width = width - 1;
-
-                g.setColor(new Color(70, 130, 180));
-                g.fillRect(x1, rowY, width, ROW_HEIGHT);
-                // borde para mejor legibilidad
-                g.setColor(Color.BLACK);
-                g.drawRect(x1, rowY, Math.max(0, width - 1), ROW_HEIGHT - 1);
-            }
-
-            // I/O row
             int ioRowY = ioAreaTop + i * (ROW_HEIGHT + ROW_SPACING);
             g.setColor(Color.BLACK);
             g.drawString(p.getPid(), 8, ioRowY + ROW_HEIGHT - 4);
+            drawIntervals(g, p.getIoIntervals(), ioRowY, new Color(220, 100, 80));
 
-            for (Interval itv : p.getIoIntervals()) {
-                int startTick = itv.start;
-                int endTick = itv.end; // end exclusive
-
-                if (endTick <= startTick)
-                    continue;
-
-                int x1 = LEFT_LABEL_WIDTH + startTick * TICK_WIDTH;
-                int width = (endTick - startTick) * TICK_WIDTH;
-                if (width > 1)
-                    width = width - 1;
-
-                g.setColor(new Color(220, 100, 80));
-                g.fillRect(x1, ioRowY, width, ROW_HEIGHT);
-                g.setColor(Color.BLACK);
-                g.drawRect(x1, ioRowY, Math.max(0, width - 1), ROW_HEIGHT - 1);
-            }
-
-            // separador
             g.setColor(new Color(180, 180, 180));
             int sepY = rowY + ROW_HEIGHT + ROW_SPACING / 2;
             g.drawLine(LEFT_LABEL_WIDTH, sepY, getWidth() - 10, sepY);
         }
+    }
 
-        // leyenda
-        int legendY = ioAreaTop + ioAreaHeight + 24;
+    private void drawIntervals(Graphics g, java.util.List<Interval> intervals, int y, Color fill) {
+        if (intervals == null) return;
+        for (Interval itv : intervals) {
+            int startTick = itv.start;
+            int endTick = itv.end;
+            if (endTick <= startTick) continue;
+            int x1 = LEFT_LABEL_WIDTH + startTick * TICK_WIDTH;
+            int width = (endTick - startTick) * TICK_WIDTH;
+            if (width > 1) width = width - 1;
+
+            g.setColor(fill);
+            g.fillRect(x1, y, width, ROW_HEIGHT);
+            g.setColor(Color.BLACK);
+            g.drawRect(x1, y, Math.max(0, width - 1), ROW_HEIGHT - 1);
+        }
+    }
+
+    private void drawLegend(Graphics g, int legendY) {
         g.setColor(new Color(70, 130, 180));
         g.fillRect(LEFT_LABEL_WIDTH, legendY, 14, 10);
         g.setColor(Color.BLACK);

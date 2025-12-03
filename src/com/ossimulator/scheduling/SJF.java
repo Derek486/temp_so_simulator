@@ -1,13 +1,26 @@
 package com.ossimulator.scheduling;
 
+import com.ossimulator.process.Proceso;
 import java.util.List;
 
-import com.ossimulator.process.Proceso;
-
+/**
+ * SJF (Shortest Job First)
+ *
+ * Selecciona el proceso cuyo tiempo CPU total requerido (suma de ráfagas CPU)
+ * sea menor. Implementación no-preemptive por simplicidad (la preempción debe
+ * manejarla el scheduler si se requiere).
+ */
 public class SJF implements SchedulingAlgorithm {
+
+    /**
+     * Recorre la ready queue y devuelve el proceso con menor total CPU requerido.
+     *
+     * @param readyQueue lista de procesos READY
+     * @return proceso con menor job length o {@code null} si la lista está vacía
+     */
     @Override
     public Proceso selectNextProcess(List<Proceso> readyQueue) {
-        if (readyQueue.isEmpty()) {
+        if (readyQueue == null || readyQueue.isEmpty()) {
             return null;
         }
 
@@ -20,12 +33,13 @@ public class SJF implements SchedulingAlgorithm {
         return shortest;
     }
 
+    /**
+     * Nombre legible del algoritmo.
+     *
+     * @return nombre descriptivo
+     */
     @Override
     public String getName() {
         return "SJF (Shortest Job First)";
-    }
-
-    @Override
-    public void reset() {
     }
 }

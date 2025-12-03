@@ -7,11 +7,24 @@ import java.util.List;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
+/**
+ * Proceso
+ *
+ * Modelo de proceso usado por el simulador. Mantiene:
+ * - Identificador (pid) y tiempo de llegada.
+ * - Lista de ráfagas (Burst).
+ * - Estado de ejecución y métricas (start/end, CPU used, context switches).
+ * - Registros de intervalos para Gantt (CPU e I/O).
+ *
+ * Los getters que exponen colecciones devuelven vistas inmutables para
+ * seguridad
+ * en lectura desde la UI.
+ */
 public class Proceso implements Comparable<Proceso> {
-    private String pid;
-    private int arrivalTime;
-    private List<Burst> bursts;
-    private int priority;
+    private final String pid;
+    private final int arrivalTime;
+    private final List<Burst> bursts;
+    private final int priority;
     private int pageCount = 4;
     private ProcessState state;
     private int startTime = -1;
@@ -26,10 +39,21 @@ public class Proceso implements Comparable<Proceso> {
     private final ReentrantLock lock = new ReentrantLock();
     private final Condition stateChanged = lock.newCondition();
 
+    /**
+     * Interval
+     *
+     * Representa un intervalo [start, end) en ticks para Gantt.
+     */
     public static class Interval {
         public final int start;
         public final int end;
 
+        /**
+         * Construye un intervalo inmutable.
+         *
+         * @param s inicio (inclusive)
+         * @param e fin (exclusive)
+         */
         public Interval(int s, int e) {
             this.start = s;
             this.end = e;
@@ -41,6 +65,15 @@ public class Proceso implements Comparable<Proceso> {
     private int cpuIntervalStart = -1;
     private int ioIntervalStart = -1;
 
+    /**
+     * Construye un proceso.
+     *
+     * @param pid         identificador
+     * @param arrivalTime tiempo de llegada
+     * @param bursts      lista de ráfagas (se copia internamente)
+     * @param priority    prioridad (menor = más importante si aplica)
+     * @param pageCount   número de páginas del proceso
+     */
     public Proceso(String pid, int arrivalTime, List<Burst> bursts, int priority, int pageCount) {
         this.pid = pid;
         this.arrivalTime = arrivalTime;
@@ -57,9 +90,14 @@ public class Proceso implements Comparable<Proceso> {
 
         if (!bursts.isEmpty()) {
             burstTimeRemaining = bursts.get(0).getDuration();
+        } else {
+            burstTimeRemaining = 0;
         }
     }
 
+    /**
+     * Resetea el proceso a su estado inicial (útil para re-ejecutar la simulación).
+     */
     public void reset() {
         this.state = ProcessState.NEW;
         this.startTime = -1;
@@ -73,19 +111,28 @@ public class Proceso implements Comparable<Proceso> {
         } else {
             burstTimeRemaining = 0;
         }
-        // limpiar intervalos
         cpuIntervals.clear();
         ioIntervals.clear();
         cpuIntervalStart = -1;
         ioIntervalStart = -1;
     }
 
+    /**
+     * Inicia un intervalo de CPU si no hay uno abierto.
+     *
+     * @param time tick actual
+     */
     public void startCpuInterval(int time) {
         if (cpuIntervalStart == -1) {
             cpuIntervalStart = time;
         }
     }
 
+    /**
+     * Cierra el intervalo de CPU abierto (si existe) y lo registra.
+     *
+     * @param time tick actual
+     */
     public void endCpuInterval(int time) {
         if (cpuIntervalStart != -1) {
             cpuIntervals.add(new Interval(cpuIntervalStart, time + 1));
@@ -93,12 +140,22 @@ public class Proceso implements Comparable<Proceso> {
         }
     }
 
+    /**
+     * Inicia un intervalo de I/O si no hay uno abierto.
+     *
+     * @param time tick actual
+     */
     public void startIoInterval(int time) {
         if (ioIntervalStart == -1) {
             ioIntervalStart = time;
         }
     }
 
+    /**
+     * Cierra el intervalo de I/O abierto (si existe) y lo registra.
+     *
+     * @param time tick actual
+     */
     public void endIoInterval(int time) {
         if (ioIntervalStart != -1) {
             ioIntervals.add(new Interval(ioIntervalStart, time + 1));
@@ -106,19 +163,31 @@ public class Proceso implements Comparable<Proceso> {
         }
     }
 
-    // getters inmutables para que el UI los lea
+    /**
+     * Devuelve una vista inmutable de los intervalos de CPU.
+     *
+     * @return lista inmutable de intervalos de CPU
+     */
     public List<Interval> getCpuIntervals() {
         return Collections.unmodifiableList(cpuIntervals);
     }
 
+    /**
+     * Devuelve una vista inmutable de los intervalos de I/O.
+     *
+     * @return lista inmutable de intervalos de I/O
+     */
     public List<Interval> getIoIntervals() {
         return Collections.unmodifiableList(ioIntervals);
     }
 
-    // si el proceso termina estando en medio de un intervalo, cerrarlo
+    /**
+     * Cierra intervalos abiertos al terminar el proceso.
+     *
+     * @param time tick de terminación
+     */
     public void closeOpenIntervalsAtTermination(int time) {
         if (cpuIntervalStart != -1) {
-            // cerramos incluyendo el tick actual
             cpuIntervals.add(new Interval(cpuIntervalStart, time + 1));
             cpuIntervalStart = -1;
         }
@@ -129,8 +198,9 @@ public class Proceso implements Comparable<Proceso> {
     }
 
     /**
-     * Establece startTime si aún no fue establecido.
-     * Conveniente para que el simulador asigne startTime sólo la primera vez.
+     * Establece startTime la primera vez que se invoca.
+     *
+     * @param time tick actual
      */
     public void setStartTimeIfUnset(int time) {
         if (this.startTime == -1) {
@@ -138,38 +208,81 @@ public class Proceso implements Comparable<Proceso> {
         }
     }
 
+    /**
+     * Establece el número de páginas del proceso.
+     *
+     * @param count número de páginas
+     */
     public void setPageCount(int count) {
         this.pageCount = count;
     }
 
+    /**
+     * Devuelve el tiempo CPU usado por el proceso.
+     *
+     * @return ticks de CPU consumidos
+     */
     public int getCpuTimeUsed() {
         return cpuTimeUsed;
     }
 
+    /**
+     * Incrementa en uno el contador de CPU usado.
+     */
     public void addCpuTick() {
         cpuTimeUsed++;
     }
 
+    /**
+     * Devuelve el identificador del proceso.
+     *
+     * @return pid
+     */
     public String getPid() {
         return pid;
     }
 
+    /**
+     * Devuelve el tiempo de llegada.
+     *
+     * @return arrivalTime
+     */
     public int getArrivalTime() {
         return arrivalTime;
     }
 
+    /**
+     * Devuelve una copia de la lista de ráfagas.
+     *
+     * @return lista de ráfagas
+     */
     public List<Burst> getBursts() {
         return new ArrayList<>(bursts);
     }
 
+    /**
+     * Devuelve la prioridad del proceso.
+     *
+     * @return prioridad
+     */
     public int getPriority() {
         return priority;
     }
 
+    /**
+     * Devuelve la cantidad de páginas del proceso.
+     *
+     * @return número de páginas
+     */
     public int getPageCount() {
         return pageCount;
     }
 
+    /**
+     * Devuelve el estado actual del proceso de forma thread-safe.
+     *
+     * @return ProcessState actual
+     */
     public ProcessState getState() {
         lock.lock();
         try {
@@ -179,6 +292,11 @@ public class Proceso implements Comparable<Proceso> {
         }
     }
 
+    /**
+     * Establece el estado del proceso y notifica a hilos que esperan cambios.
+     *
+     * @param newState nuevo estado
+     */
     public void setState(ProcessState newState) {
         lock.lock();
         try {
@@ -189,28 +307,20 @@ public class Proceso implements Comparable<Proceso> {
         }
     }
 
-    public int getStartTime() {
-        return startTime;
-    }
-
-    public void setStartTime(int time) {
-        if (this.startTime == -1) {
-            this.startTime = time;
-        }
-    }
-
-    public int getEndTime() {
-        return endTime;
-    }
-
+    /**
+     * Establece el tiempo de finalización.
+     *
+     * @param time tick de finalización
+     */
     public void setEndTime(int time) {
         this.endTime = time;
     }
 
-    public int getCurrentBurstIndex() {
-        return currentBurstIndex;
-    }
-
+    /**
+     * Devuelve la ráfaga actual o null si no quedan ráfagas.
+     *
+     * @return Burst actual o null
+     */
     public Burst getCurrentBurst() {
         if (currentBurstIndex < bursts.size()) {
             return bursts.get(currentBurstIndex);
@@ -218,15 +328,30 @@ public class Proceso implements Comparable<Proceso> {
         return null;
     }
 
+    /**
+     * Devuelve la duración restante de la ráfaga actual.
+     *
+     * @return ticks restantes
+     */
     public int getBurstTimeRemaining() {
         return burstTimeRemaining;
     }
 
+    /**
+     * Establece la duración restante de la ráfaga actual.
+     *
+     * @param time ticks restantes
+     */
     public void setBurstTimeRemaining(int time) {
         this.burstTimeRemaining = time;
     }
 
-    // Nuevo: decrementa tiempo de la ráfaga actual, y opcionalmente cuenta como CPU
+    /**
+     * Decrementa el tiempo de la ráfaga actual y opcionalmente contabiliza CPU.
+     *
+     * @param amount cantidad a decrementar
+     * @param isCpu  true si el decremento corresponde a CPU
+     */
     public void decrementCurrentBurstTime(int amount, boolean isCpu) {
         this.burstTimeRemaining -= amount;
         if (isCpu) {
@@ -234,6 +359,11 @@ public class Proceso implements Comparable<Proceso> {
         }
     }
 
+    /**
+     * Avanza a la siguiente ráfaga si existe.
+     *
+     * @return true si hay una siguiente ráfaga; false si ya no quedan ráfagas
+     */
     public boolean moveToNextBurst() {
         currentBurstIndex++;
         if (currentBurstIndex < bursts.size()) {
@@ -243,14 +373,29 @@ public class Proceso implements Comparable<Proceso> {
         return false;
     }
 
+    /**
+     * Devuelve el total de tiempo CPU requerido por las ráfagas del proceso.
+     *
+     * @return tiempo CPU total necesario
+     */
     public int getTotalCPUTimeNeeded() {
         return totalCPUTimeNeeded;
     }
 
+    /**
+     * Devuelve el tiempo CPU utilizado.
+     *
+     * @return tiempo CPU usado
+     */
     public int getCPUTimeUsed() {
         return cpuTimeUsed;
     }
 
+    /**
+     * Calcula el tiempo de espera (waiting time) si start y end están disponibles.
+     *
+     * @return waiting time o 0 si no está calculable
+     */
     public int getWaitingTime() {
         if (startTime == -1 || endTime == -1) {
             return 0;
@@ -259,6 +404,11 @@ public class Proceso implements Comparable<Proceso> {
         return Math.max(0, waiting);
     }
 
+    /**
+     * Calcula el turnaround time si start y end están disponibles.
+     *
+     * @return turnaround time o 0 si no está calculable
+     */
     public int getTurnaroundTime() {
         if (startTime == -1 || endTime == -1) {
             return 0;
@@ -267,26 +417,54 @@ public class Proceso implements Comparable<Proceso> {
         return Math.max(0, tr);
     }
 
+    /**
+     * Devuelve el número de cambios de contexto registrados.
+     *
+     * @return context switches
+     */
     public int getContextSwitches() {
         return contextSwitches;
     }
 
+    /**
+     * Incrementa el contador de cambios de contexto.
+     */
     public void incrementContextSwitches() {
         contextSwitches++;
     }
 
+    /**
+     * Devuelve el tiempo del último acceso registrado.
+     *
+     * @return lastAccessTime
+     */
     public int getLastAccessTime() {
         return lastAccessTime;
     }
 
+    /**
+     * Establece el tiempo del último acceso.
+     *
+     * @param time tick del último acceso
+     */
     public void setLastAccessTime(int time) {
         this.lastAccessTime = time;
     }
 
+    /**
+     * Indica si el proceso está en estado TERMINATED.
+     *
+     * @return true si terminado
+     */
     public boolean isComplete() {
         return state == ProcessState.TERMINATED;
     }
 
+    /**
+     * Espera por un cambio de estado. Método bloqueante que usa Condition.
+     *
+     * @throws InterruptedException si el hilo es interrumpido
+     */
     public void waitForStateChange() throws InterruptedException {
         lock.lock();
         try {

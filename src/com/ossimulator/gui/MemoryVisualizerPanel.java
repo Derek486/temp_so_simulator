@@ -12,19 +12,35 @@ import javax.swing.table.DefaultTableModel;
 
 /**
  * MemoryVisualizerPanel
- * - Arriba: Gantt-like canvas que muestra, por cada frame (fila), los
- * AccessEvent como barras.
- * Ahora usa AccessEvent.seq como coordenada X (una columna por referencia).
- * - Abajo: tabla simple de Frame | Process | Page (snapshot).
- * - Actualiza en EDT cuando memoryManager.notifyUpdate() es llamado.
+ *
+ * Panel compuesto por:
+ * - Un canvas tipo Gantt en la parte superior que muestra, por cada frame
+ * (fila),
+ * los AccessEvent como pequeñas barras alineadas por secuencia
+ * (AccessEvent.seq).
+ * - Una tabla en el centro que presenta un snapshot simple: Frame | Process |
+ * Page.
+ * - Un panel de estadísticas en la parte inferior con contadores (page faults y
+ * replacements).
+ *
+ * El método {@link #updateData(MemoryManager)} aplica un snapshot leido desde
+ * MemoryManager y debe invocarse desde el hilo de la UI (EDT). Internamente
+ * maneja
+ * InterruptedException que pueda lanzar el MemoryManager al tomar snapshots.
  */
 public class MemoryVisualizerPanel extends JPanel {
+  private static final long serialVersionUID = 1L;
+
   private final GanttCanvas canvas;
   private final JTable frameTable;
   private final DefaultTableModel tableModel;
   private final JLabel pageFaultsLabel;
   private final JLabel replacementsLabel;
 
+  /**
+   * Construye el panel, crea componentes y dispone el layout (canvas arriba,
+   * tabla centro, stats abajo).
+   */
   public MemoryVisualizerPanel() {
     setLayout(new BorderLayout());
     setBackground(new Color(250, 250, 250));
@@ -34,8 +50,9 @@ public class MemoryVisualizerPanel extends JPanel {
     canvasScroll.setPreferredSize(new Dimension(1000, 260));
     canvasScroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_ALWAYS);
 
-    // tabla
     tableModel = new DefaultTableModel(new String[] { "Frame", "Process", "Page" }, 0) {
+      private static final long serialVersionUID = 1L;
+
       @Override
       public boolean isCellEditable(int row, int column) {
         return false;
@@ -44,7 +61,6 @@ public class MemoryVisualizerPanel extends JPanel {
     frameTable = new JTable(tableModel);
     frameTable.setRowHeight(22);
 
-    // stats
     JPanel stats = new JPanel(new FlowLayout(FlowLayout.LEFT));
     pageFaultsLabel = new JLabel("Page Faults: 0");
     replacementsLabel = new JLabel("Replacements: 0");
@@ -52,14 +68,22 @@ public class MemoryVisualizerPanel extends JPanel {
     stats.add(Box.createHorizontalStrut(20));
     stats.add(replacementsLabel);
 
-    // layout: canvas arriba, tabla centro, stats abajo
     add(canvasScroll, BorderLayout.NORTH);
     add(new JScrollPane(frameTable), BorderLayout.CENTER);
     add(stats, BorderLayout.SOUTH);
   }
 
   /**
-   * Llamar desde EDT. Actualiza tabla + canvas snapshot.
+   * Actualiza la vista con un snapshot tomado del MemoryManager.
+   *
+   * <p>
+   * Advertencia: este método debe invocarse desde el hilo de la interfaz (EDT).
+   * Si se llama desde otro hilo, envolver con
+   * {@code SwingUtilities.invokeLater(...)}.
+   * </p>
+   *
+   * @param memoryManager instancia de MemoryManager o {@code null} para limpiar
+   *                      la vista
    */
   public void updateData(MemoryManager memoryManager) {
     if (memoryManager == null) {
@@ -71,7 +95,6 @@ public class MemoryVisualizerPanel extends JPanel {
     }
 
     try {
-      // snapshot: frames + pages + history
       Map<Integer, Proceso> frames = memoryManager.getFrameStatus();
       Map<Integer, Integer> framePages = memoryManager.getFrameToPageMap();
       Map<Integer, List<AccessEvent>> history = memoryManager.getFrameAccessHistorySnapshot();
@@ -79,7 +102,6 @@ public class MemoryVisualizerPanel extends JPanel {
       int currentTime = memoryManager.getCurrentTime();
       long maxSeq = memoryManager.getMaxAccessSequence();
 
-      // tabla rows
       tableModel.setRowCount(0);
       for (int i = 0; i < totalFrames; i++) {
         Proceso p = frames.get(i);
@@ -100,31 +122,47 @@ public class MemoryVisualizerPanel extends JPanel {
     }
   }
 
-  // --------- Inner canvas class that paints the gantt-like view using seq
-  // ----------
+  /**
+   * Canvas interno que pinta una fila por frame y una columna por índice de
+   * secuencia (seq).
+   */
   private static class GanttCanvas extends JPanel {
-    private Map<Integer, List<AccessEvent>> history; // snapshot
+    private static final long serialVersionUID = 1L;
+
+    private Map<Integer, List<AccessEvent>> history = Collections.emptyMap();
     private long maxSeq = 0L;
     private int currentTime = 0;
 
     private static final int ROW_HEIGHT = 26;
     private static final int ROW_SPACING = 6;
     private static final int LEFT_COL = 56;
-    private static final int TICK_W = 18; // width per seq column
+    private static final int TICK_W = 18;
     private static final int TOP_PADDING = 14;
     private static final int RIGHT_PADDING = 40;
 
+    /**
+     * Construye el canvas con tamaño preferido inicial y fondo blanco.
+     */
     public GanttCanvas() {
       setPreferredSize(new Dimension(1200, 300));
       setBackground(Color.WHITE);
     }
 
+    /**
+     * Establece el snapshot que se pintará y recalcula el tamaño preferido del
+     * canvas.
+     *
+     * @param history     mapa frame -> lista de AccessEvent (puede ser
+     *                    {@code null})
+     * @param maxSeq      valor máximo de secuencia observado
+     * @param currentTime tiempo actual de simulación (solo informativo)
+     */
     public void setSnapshot(Map<Integer, List<AccessEvent>> history, long maxSeq, int currentTime) {
       this.history = (history == null) ? Collections.emptyMap() : history;
       this.maxSeq = Math.max(0L, maxSeq);
       this.currentTime = currentTime;
 
-      int rows = Math.max(1, Math.max(this.history.size(), 1));
+      int rows = Math.max(1, this.history.size());
       int height = TOP_PADDING + rows * (ROW_HEIGHT + ROW_SPACING) + 80;
       int width = LEFT_COL + (int) ((this.maxSeq + 6) * TICK_W) + RIGHT_PADDING;
       setPreferredSize(new Dimension(Math.max(width, 600), Math.max(height, 180)));
@@ -136,11 +174,9 @@ public class MemoryVisualizerPanel extends JPanel {
       Graphics2D g = (Graphics2D) g0.create();
       g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
-      // fondo cuadricula claro
       g.setColor(new Color(250, 250, 250));
       g.fillRect(0, 0, getWidth(), getHeight());
 
-      // ejes y ticks por seq (X = seq index)
       g.setColor(new Color(230, 230, 230));
       long columns = Math.max(1L, Math.max(6L, maxSeq + 2));
       for (long s = 0; s <= columns; s++) {
@@ -148,11 +184,8 @@ public class MemoryVisualizerPanel extends JPanel {
         g.drawLine(x, TOP_PADDING - 6, x, getHeight() - 40);
       }
 
-      // draws seq labels every 5 (or 1 when few)
       g.setColor(Color.DARK_GRAY);
-      int labelStep = (maxSeq <= 40) ? 1 : ((int) Math.ceil(maxSeq / 40.0) * 1 + 4); // coarse
-      if (labelStep <= 0)
-        labelStep = 5;
+      int labelStep = (maxSeq <= 40) ? 1 : Math.max(5, (int) Math.ceil(maxSeq / 40.0) + 4);
       for (long s = 0; s <= maxSeq + 1; s += labelStep) {
         int x = LEFT_COL + (int) (s * TICK_W);
         g.drawString(String.valueOf(s == 0 ? 0 : s), x + 2, TOP_PADDING - 2);
@@ -165,7 +198,6 @@ public class MemoryVisualizerPanel extends JPanel {
         return;
       }
 
-      // obtener frames en orden ascendente (asegura filas consistentes)
       List<Integer> frames = history.keySet().stream().sorted().collect(Collectors.toList());
       if (frames.isEmpty()) {
         g.setColor(Color.DARK_GRAY);
@@ -174,54 +206,45 @@ public class MemoryVisualizerPanel extends JPanel {
         return;
       }
 
-      // dibujar filas por frame
       int rowIndex = 0;
       for (Integer frame : frames) {
         int y = TOP_PADDING + rowIndex * (ROW_HEIGHT + ROW_SPACING);
 
-        // etiqueta frame a la izquierda en bloque claro
         g.setColor(new Color(245, 245, 245));
         g.fillRect(0, y, LEFT_COL - 8, ROW_HEIGHT);
         g.setColor(Color.BLACK);
         g.drawString("F" + frame, 8, y + ROW_HEIGHT - 10);
 
-        // baseline por fila
         g.setColor(new Color(235, 235, 235));
         g.fillRect(LEFT_COL - 2, y, (int) ((maxSeq + 6) * TICK_W) + 4, ROW_HEIGHT);
 
         List<AccessEvent> evs = history.get(frame);
         if (evs != null) {
           for (AccessEvent ev : evs) {
-            // usar seq como coordenada X (columna por referencia)
-            long seqIndex = Math.max(1L, ev.seq); // seq starts at 1
+            long seqIndex = Math.max(1L, ev.seq);
             int x = LEFT_COL + (int) ((seqIndex - 1) * TICK_W);
             int w = Math.max(2, TICK_W - 2);
 
-            // color: hit = verde, load/miss = naranja, evict = rojo
             if (ev.hit) {
-              g.setColor(new Color(80, 180, 80)); // verde
+              g.setColor(new Color(80, 180, 80));
             } else {
               if ("evict".equals(ev.note) || "force-evict".equals(ev.note)) {
-                g.setColor(new Color(200, 80, 80)); // rojo
+                g.setColor(new Color(200, 80, 80));
               } else {
-                g.setColor(new Color(240, 160, 40)); // naranja para loads/miss/alloc/unload
+                g.setColor(new Color(240, 160, 40));
               }
             }
 
-            // dibujar rectángulo central
             g.fillRoundRect(x + 1, y + 3, w, ROW_HEIGHT - 6, 6, 6);
 
-            // pintar número de página encima si hay espacio
             g.setColor(Color.BLACK);
             String label = (ev.page >= 0) ? String.valueOf(ev.page) : "X";
-            // centrar texto en el cuadro si cabe
             FontMetrics fm = g.getFontMetrics();
             int strW = fm.stringWidth(label);
             int tx = x + Math.max(2, (w - strW) / 2);
             int ty = y + (ROW_HEIGHT + fm.getAscent()) / 2 - 4;
             g.drawString(label, tx, ty);
 
-            // opcional: dibujar small marker con nota (p. ej. "E" para evict)
             if ("evict".equals(ev.note) || "force-evict".equals(ev.note)) {
               g.setColor(new Color(120, 20, 20));
               g.drawString("E", x + 1, y + 12);
@@ -232,7 +255,6 @@ public class MemoryVisualizerPanel extends JPanel {
         rowIndex++;
       }
 
-      // leyenda en la parte inferior
       int legendY = getHeight() - 28;
       g.setColor(new Color(80, 180, 80));
       g.fillRect(LEFT_COL, legendY, 14, 10);
@@ -249,7 +271,6 @@ public class MemoryVisualizerPanel extends JPanel {
       g.setColor(Color.BLACK);
       g.drawString("Eviction", LEFT_COL + 278, legendY + 10);
 
-      // pequeña nota: tiempo actual (opcional, informativo)
       g.setColor(Color.DARK_GRAY);
       g.drawString("sim time: " + currentTime + "   maxSeq: " + maxSeq, getWidth() - 220, legendY + 10);
 
