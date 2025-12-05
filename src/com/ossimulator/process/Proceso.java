@@ -1,11 +1,7 @@
 package com.ossimulator.process;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.concurrent.locks.Condition;
-import java.util.concurrent.locks.ReentrantLock;
+import java.util.*;
+import com.ossimulator.util.Semaphore;;
 
 /**
  * Proceso
@@ -36,8 +32,7 @@ public class Proceso implements Comparable<Proceso> {
     private int contextSwitches = 0;
     private int lastAccessTime = -1;
 
-    private final ReentrantLock lock = new ReentrantLock();
-    private final Condition stateChanged = lock.newCondition();
+    private final Semaphore mutex;
 
     /**
      * Interval
@@ -77,10 +72,11 @@ public class Proceso implements Comparable<Proceso> {
     public Proceso(String pid, int arrivalTime, List<Burst> bursts, int priority, int pageCount) {
         this.pid = pid;
         this.arrivalTime = arrivalTime;
-        this.bursts = new ArrayList<>(bursts);
+        this.bursts = new ArrayList<>(bursts != null ? bursts : new ArrayList<>());
         this.priority = priority;
         this.pageCount = pageCount;
         this.state = ProcessState.NEW;
+        this.mutex = new Semaphore(1);
 
         for (Burst b : bursts) {
             if (b.getType() == BurstType.CPU) {
@@ -98,23 +94,28 @@ public class Proceso implements Comparable<Proceso> {
     /**
      * Resetea el proceso a su estado inicial (útil para re-ejecutar la simulación).
      */
-    public void reset() {
-        this.state = ProcessState.NEW;
-        this.startTime = -1;
-        this.endTime = -1;
-        this.currentBurstIndex = 0;
-        this.cpuTimeUsed = 0;
-        this.contextSwitches = 0;
-        this.lastAccessTime = -1;
-        if (!bursts.isEmpty()) {
-            burstTimeRemaining = bursts.get(0).getDuration();
-        } else {
-            burstTimeRemaining = 0;
+    public void reset() throws InterruptedException {
+        mutex.waitSemaphore();
+        try {
+            this.state = ProcessState.NEW;
+            this.startTime = -1;
+            this.endTime = -1;
+            this.currentBurstIndex = 0;
+            this.cpuTimeUsed = 0;
+            this.contextSwitches = 0;
+            this.lastAccessTime = -1;
+            if (!bursts.isEmpty()) {
+                burstTimeRemaining = bursts.get(0).getDuration();
+            } else {
+                burstTimeRemaining = 0;
+            }
+            cpuIntervals.clear();
+            ioIntervals.clear();
+            cpuIntervalStart = -1;
+            ioIntervalStart = -1;
+        } finally {
+            mutex.signalSemaphore();
         }
-        cpuIntervals.clear();
-        ioIntervals.clear();
-        cpuIntervalStart = -1;
-        ioIntervalStart = -1;
     }
 
     /**
@@ -122,9 +123,14 @@ public class Proceso implements Comparable<Proceso> {
      *
      * @param time tick actual
      */
-    public void startCpuInterval(int time) {
-        if (cpuIntervalStart == -1) {
-            cpuIntervalStart = time;
+    public void startCpuInterval(int time) throws InterruptedException {
+        mutex.waitSemaphore();
+        try {
+            if (cpuIntervalStart == -1) {
+                cpuIntervalStart = time;
+            }
+        } finally {
+            mutex.signalSemaphore();
         }
     }
 
@@ -133,10 +139,15 @@ public class Proceso implements Comparable<Proceso> {
      *
      * @param time tick actual
      */
-    public void endCpuInterval(int time) {
-        if (cpuIntervalStart != -1) {
-            cpuIntervals.add(new Interval(cpuIntervalStart, time + 1));
-            cpuIntervalStart = -1;
+    public void endCpuInterval(int time) throws InterruptedException {
+        mutex.waitSemaphore();
+        try {
+            if (cpuIntervalStart != -1) {
+                cpuIntervals.add(new Interval(cpuIntervalStart, time + 1));
+                cpuIntervalStart = -1;
+            }
+        } finally {
+            mutex.signalSemaphore();
         }
     }
 
@@ -145,9 +156,14 @@ public class Proceso implements Comparable<Proceso> {
      *
      * @param time tick actual
      */
-    public void startIoInterval(int time) {
-        if (ioIntervalStart == -1) {
-            ioIntervalStart = time;
+    public void startIoInterval(int time) throws InterruptedException {
+        mutex.waitSemaphore();
+        try {
+            if (ioIntervalStart == -1) {
+                ioIntervalStart = time;
+            }
+        } finally {
+            mutex.signalSemaphore();
         }
     }
 
@@ -156,10 +172,15 @@ public class Proceso implements Comparable<Proceso> {
      *
      * @param time tick actual
      */
-    public void endIoInterval(int time) {
-        if (ioIntervalStart != -1) {
-            ioIntervals.add(new Interval(ioIntervalStart, time + 1));
-            ioIntervalStart = -1;
+    public void endIoInterval(int time) throws InterruptedException {
+        mutex.waitSemaphore();
+        try {
+            if (ioIntervalStart != -1) {
+                ioIntervals.add(new Interval(ioIntervalStart, time + 1));
+                ioIntervalStart = -1;
+            }
+        } finally {
+            mutex.signalSemaphore();
         }
     }
 
@@ -168,8 +189,13 @@ public class Proceso implements Comparable<Proceso> {
      *
      * @return lista inmutable de intervalos de CPU
      */
-    public List<Interval> getCpuIntervals() {
-        return Collections.unmodifiableList(cpuIntervals);
+    public List<Interval> getCpuIntervals() throws InterruptedException {
+        mutex.waitSemaphore();
+        try {
+            return new ArrayList<>(cpuIntervals);
+        } finally {
+            mutex.signalSemaphore();
+        }
     }
 
     /**
@@ -177,8 +203,13 @@ public class Proceso implements Comparable<Proceso> {
      *
      * @return lista inmutable de intervalos de I/O
      */
-    public List<Interval> getIoIntervals() {
-        return Collections.unmodifiableList(ioIntervals);
+    public List<Interval> getIoIntervals() throws InterruptedException {
+        mutex.waitSemaphore();
+        try {
+            return new ArrayList<>(ioIntervals);
+        } finally {
+            mutex.signalSemaphore();
+        }
     }
 
     /**
@@ -186,14 +217,19 @@ public class Proceso implements Comparable<Proceso> {
      *
      * @param time tick de terminación
      */
-    public void closeOpenIntervalsAtTermination(int time) {
-        if (cpuIntervalStart != -1) {
-            cpuIntervals.add(new Interval(cpuIntervalStart, time + 1));
-            cpuIntervalStart = -1;
-        }
-        if (ioIntervalStart != -1) {
-            ioIntervals.add(new Interval(ioIntervalStart, time + 1));
-            ioIntervalStart = -1;
+    public void closeOpenIntervalsAtTermination(int time) throws InterruptedException {
+        mutex.waitSemaphore();
+        try {
+            if (cpuIntervalStart != -1) {
+                cpuIntervals.add(new Interval(cpuIntervalStart, time + 1));
+                cpuIntervalStart = -1;
+            }
+            if (ioIntervalStart != -1) {
+                ioIntervals.add(new Interval(ioIntervalStart, time + 1));
+                ioIntervalStart = -1;
+            }
+        } finally {
+            mutex.signalSemaphore();
         }
     }
 
@@ -202,9 +238,14 @@ public class Proceso implements Comparable<Proceso> {
      *
      * @param time tick actual
      */
-    public void setStartTimeIfUnset(int time) {
-        if (this.startTime == -1) {
-            this.startTime = time;
+    public void setStartTimeIfUnset(int time) throws InterruptedException {
+        mutex.waitSemaphore();
+        try {
+            if (this.startTime == -1) {
+                this.startTime = time;
+            }
+        } finally {
+            mutex.signalSemaphore();
         }
     }
 
@@ -213,8 +254,13 @@ public class Proceso implements Comparable<Proceso> {
      *
      * @param count número de páginas
      */
-    public void setPageCount(int count) {
-        this.pageCount = count;
+    public void setPageCount(int count) throws InterruptedException {
+        mutex.waitSemaphore();
+        try {
+            this.pageCount = count;
+        } finally {
+            mutex.signalSemaphore();
+        }
     }
 
     /**
@@ -222,15 +268,25 @@ public class Proceso implements Comparable<Proceso> {
      *
      * @return ticks de CPU consumidos
      */
-    public int getCpuTimeUsed() {
-        return cpuTimeUsed;
+    public int getCpuTimeUsed() throws InterruptedException {
+        mutex.waitSemaphore();
+        try {
+            return cpuTimeUsed;
+        } finally {
+            mutex.signalSemaphore();
+        }
     }
 
     /**
      * Incrementa en uno el contador de CPU usado.
      */
-    public void addCpuTick() {
-        cpuTimeUsed++;
+    public void addCpuTick() throws InterruptedException {
+        mutex.waitSemaphore();
+        try {
+            cpuTimeUsed++;
+        } finally {
+            mutex.signalSemaphore();
+        }
     }
 
     /**
@@ -283,12 +339,12 @@ public class Proceso implements Comparable<Proceso> {
      *
      * @return ProcessState actual
      */
-    public ProcessState getState() {
-        lock.lock();
+    public ProcessState getState() throws InterruptedException {
+        mutex.waitSemaphore();
         try {
             return state;
         } finally {
-            lock.unlock();
+            mutex.signalSemaphore();
         }
     }
 
@@ -297,13 +353,12 @@ public class Proceso implements Comparable<Proceso> {
      *
      * @param newState nuevo estado
      */
-    public void setState(ProcessState newState) {
-        lock.lock();
+    public void setState(ProcessState newState) throws InterruptedException {
+        mutex.waitSemaphore();
         try {
             this.state = newState;
-            stateChanged.signalAll();
         } finally {
-            lock.unlock();
+            mutex.signalSemaphore();
         }
     }
 
@@ -312,8 +367,13 @@ public class Proceso implements Comparable<Proceso> {
      *
      * @param time tick de finalización
      */
-    public void setEndTime(int time) {
-        this.endTime = time;
+    public void setEndTime(int time) throws InterruptedException {
+        mutex.waitSemaphore();
+        try {
+            this.endTime = time;
+        } finally {
+            mutex.signalSemaphore();
+        }
     }
 
     /**
@@ -321,11 +381,16 @@ public class Proceso implements Comparable<Proceso> {
      *
      * @return Burst actual o null
      */
-    public Burst getCurrentBurst() {
-        if (currentBurstIndex < bursts.size()) {
-            return bursts.get(currentBurstIndex);
+    public Burst getCurrentBurst() throws InterruptedException {
+        mutex.waitSemaphore();
+        try {
+            if (currentBurstIndex < bursts.size()) {
+                return bursts.get(currentBurstIndex);
+            }
+            return null;
+        } finally {
+            mutex.signalSemaphore();
         }
-        return null;
     }
 
     /**
@@ -333,8 +398,13 @@ public class Proceso implements Comparable<Proceso> {
      *
      * @return ticks restantes
      */
-    public int getBurstTimeRemaining() {
-        return burstTimeRemaining;
+    public int getBurstTimeRemaining() throws InterruptedException {
+        mutex.waitSemaphore();
+        try {
+            return burstTimeRemaining;
+        } finally {
+            mutex.signalSemaphore();
+        }
     }
 
     /**
@@ -342,8 +412,13 @@ public class Proceso implements Comparable<Proceso> {
      *
      * @param time ticks restantes
      */
-    public void setBurstTimeRemaining(int time) {
-        this.burstTimeRemaining = time;
+    public void setBurstTimeRemaining(int time) throws InterruptedException {
+        mutex.waitSemaphore();
+        try {
+            this.burstTimeRemaining = time;
+        } finally {
+            mutex.signalSemaphore();
+        }
     }
 
     /**
@@ -364,13 +439,18 @@ public class Proceso implements Comparable<Proceso> {
      *
      * @return true si hay una siguiente ráfaga; false si ya no quedan ráfagas
      */
-    public boolean moveToNextBurst() {
-        currentBurstIndex++;
-        if (currentBurstIndex < bursts.size()) {
-            burstTimeRemaining = bursts.get(currentBurstIndex).getDuration();
-            return true;
+    public boolean moveToNextBurst() throws InterruptedException {
+        mutex.waitSemaphore();
+        try {
+            currentBurstIndex++;
+            if (currentBurstIndex < bursts.size()) {
+                burstTimeRemaining = bursts.get(currentBurstIndex).getDuration();
+                return true;
+            }
+            return false;
+        } finally {
+            mutex.signalSemaphore();
         }
-        return false;
     }
 
     /**
@@ -387,8 +467,13 @@ public class Proceso implements Comparable<Proceso> {
      *
      * @return tiempo CPU usado
      */
-    public int getCPUTimeUsed() {
-        return cpuTimeUsed;
+    public int getCPUTimeUsed() throws InterruptedException {
+        mutex.waitSemaphore();
+        try {
+            return cpuTimeUsed;
+        } finally {
+            mutex.signalSemaphore();
+        }
     }
 
     /**
@@ -396,12 +481,17 @@ public class Proceso implements Comparable<Proceso> {
      *
      * @return waiting time o 0 si no está calculable
      */
-    public int getWaitingTime() {
-        if (startTime == -1 || endTime == -1) {
-            return 0;
+    public int getWaitingTime() throws InterruptedException {
+        mutex.waitSemaphore();
+        try {
+            if (startTime == -1 || endTime == -1) {
+                return 0;
+            }
+            int waiting = startTime;
+            return Math.max(0, waiting);
+        } finally {
+            mutex.signalSemaphore();
         }
-        int waiting = startTime;
-        return Math.max(0, waiting);
     }
 
     /**
@@ -409,12 +499,17 @@ public class Proceso implements Comparable<Proceso> {
      *
      * @return turnaround time o 0 si no está calculable
      */
-    public int getTurnaroundTime() {
-        if (startTime == -1 || endTime == -1) {
-            return 0;
+    public int getTurnaroundTime() throws InterruptedException {
+        mutex.waitSemaphore();
+        try {
+            if (startTime == -1 || endTime == -1) {
+                return 0;
+            }
+            int tr = (endTime + 1) - startTime;
+            return Math.max(0, tr);
+        } finally {
+            mutex.signalSemaphore();
         }
-        int tr = (endTime + 1) - startTime;
-        return Math.max(0, tr);
     }
 
     /**
@@ -422,15 +517,25 @@ public class Proceso implements Comparable<Proceso> {
      *
      * @return context switches
      */
-    public int getContextSwitches() {
-        return contextSwitches;
+    public int getContextSwitches() throws InterruptedException {
+        mutex.waitSemaphore();
+        try {
+            return contextSwitches;
+        } finally {
+            mutex.signalSemaphore();
+        }
     }
 
     /**
      * Incrementa el contador de cambios de contexto.
      */
-    public void incrementContextSwitches() {
-        contextSwitches++;
+    public void incrementContextSwitches() throws InterruptedException {
+        mutex.waitSemaphore();
+        try {
+            contextSwitches++;
+        } finally {
+            mutex.signalSemaphore();
+        }
     }
 
     /**
@@ -438,8 +543,13 @@ public class Proceso implements Comparable<Proceso> {
      *
      * @return lastAccessTime
      */
-    public int getLastAccessTime() {
-        return lastAccessTime;
+    public int getLastAccessTime() throws InterruptedException {
+        mutex.waitSemaphore();
+        try {
+            return lastAccessTime;
+        } finally {
+            mutex.signalSemaphore();
+        }
     }
 
     /**
@@ -447,8 +557,13 @@ public class Proceso implements Comparable<Proceso> {
      *
      * @param time tick del último acceso
      */
-    public void setLastAccessTime(int time) {
-        this.lastAccessTime = time;
+    public void setLastAccessTime(int time) throws InterruptedException {
+        mutex.waitSemaphore();
+        try {
+            this.lastAccessTime = time;
+        } finally {
+            mutex.signalSemaphore();
+        }
     }
 
     /**
@@ -456,21 +571,12 @@ public class Proceso implements Comparable<Proceso> {
      *
      * @return true si terminado
      */
-    public boolean isComplete() {
-        return state == ProcessState.TERMINATED;
-    }
-
-    /**
-     * Espera por un cambio de estado. Método bloqueante que usa Condition.
-     *
-     * @throws InterruptedException si el hilo es interrumpido
-     */
-    public void waitForStateChange() throws InterruptedException {
-        lock.lock();
+    public boolean isComplete() throws InterruptedException {
+        mutex.waitSemaphore();
         try {
-            stateChanged.await();
+            return state == ProcessState.TERMINATED;
         } finally {
-            lock.unlock();
+            mutex.signalSemaphore();
         }
     }
 

@@ -40,7 +40,7 @@ public class SystemMetrics {
      *
      * @return average waiting time o 0 si no hay procesos completados
      */
-    public double getAverageWaitingTime() {
+    public double getAverageWaitingTime() throws InterruptedException {
         if (completedProcesses.isEmpty()) {
             return 0;
         }
@@ -56,7 +56,7 @@ public class SystemMetrics {
      *
      * @return average turnaround time o 0 si no hay procesos completados
      */
-    public double getAverageTurnaroundTime() {
+    public double getAverageTurnaroundTime() throws InterruptedException {
         if (completedProcesses.isEmpty()) {
             return 0;
         }

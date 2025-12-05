@@ -53,4 +53,12 @@ public class Semaphore {
     public synchronized int getPermits() {
         return permits;
     }
+
+    /**
+     * Resetea el contador de permisos a cero.
+     * Útil para reiniciar la simulación.
+     */
+    public synchronized void reset() {
+        this.permits = 0;
+    }
 }

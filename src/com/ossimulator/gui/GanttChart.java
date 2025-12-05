@@ -102,12 +102,20 @@ public class GanttChart extends JPanel {
             g.setColor(Color.BLACK);
             g.drawString(p.getPid(), 8, rowY + ROW_HEIGHT - 4);
 
-            drawIntervals(g, p.getCpuIntervals(), rowY, new Color(70, 130, 180));
+            try {
+                List<Proceso.Interval> cpuIntervals = p.getCpuIntervals();
+                drawIntervals(g, cpuIntervals, rowY, new Color(70, 130, 180));
 
-            int ioRowY = ioAreaTop + i * (ROW_HEIGHT + ROW_SPACING);
-            g.setColor(Color.BLACK);
-            g.drawString(p.getPid(), 8, ioRowY + ROW_HEIGHT - 4);
-            drawIntervals(g, p.getIoIntervals(), ioRowY, new Color(220, 100, 80));
+                int ioRowY = ioAreaTop + i * (ROW_HEIGHT + ROW_SPACING);
+                g.setColor(Color.BLACK);
+                g.drawString(p.getPid(), 8, ioRowY + ROW_HEIGHT - 4);
+
+                List<Proceso.Interval> ioIntervals = p.getIoIntervals();
+                drawIntervals(g, ioIntervals, ioRowY, new Color(220, 100, 80));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
 
             g.setColor(new Color(180, 180, 180));
             int sepY = rowY + ROW_HEIGHT + ROW_SPACING / 2;

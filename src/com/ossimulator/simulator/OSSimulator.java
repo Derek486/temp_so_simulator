@@ -15,6 +15,8 @@ import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.TimeUnit;
 
+import javax.swing.UIDefaults.ActiveValue;
+
 /**
  * OSSimulator
  *
@@ -204,17 +206,30 @@ public class OSSimulator {
      * Reinicia el estado de las estructuras internas y procesos antes de arrancar.
      */
     private void resetProcesses() {
-        for (Proceso p : allProcesses) {
-            p.reset();
+        try {
+            for (Proceso p : allProcesses) {
+                p.reset();
+            }
+            mutex.waitSemaphore();
+            try {
+                readyQueue.clear();
+                ioQueue.clear();
+                memoryBlockedQueue.clear();
+                readyNextTick.clear();
+                runningProcess = null;
+                currentTime = 0;
+                contextSwitches = 0;
+                timeSliceRemaining = 0;
+            } finally {
+                mutex.signalSemaphore();
+            }
+            if (avaliableProcesses != null) {
+                avaliableProcesses.reset();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            eventLogger.log("Reset interrupted");
         }
-        readyQueue.clear();
-        ioQueue.clear();
-        memoryBlockedQueue.clear();
-        readyNextTick.clear();
-        runningProcess = null;
-        currentTime = 0;
-        contextSwitches = 0;
-        timeSliceRemaining = 0;
     }
 
     /**
@@ -596,25 +611,33 @@ public class OSSimulator {
      * Cálculos finales y registro de métricas al terminar la simulación.
      */
     private void finalizeSimulation() {
-        int totalCpu = allProcesses.stream().mapToInt(Proceso::getCPUTimeUsed).sum();
-        int totalTime = currentTime + 1;
-        int totalIdle = Math.max(0, totalTime - totalCpu);
-        metrics.setTotalCPUTime(totalCpu);
-        metrics.setTotalIdleTime(totalIdle);
-        metrics.setContextSwitches(contextSwitches);
-
-        if (memoryManager != null) {
-            try {
-                eventLogger.log(String.format("Memory stats: PageFaults=%d Replacements=%d FreeFrames=%d",
-                        memoryManager.getTotalPageFaults(),
-                        memoryManager.getTotalReplacements(),
-                        memoryManager.getFreeFrames()));
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+        try {
+            int totalCpu = 0;
+            for (Proceso p : allProcesses) {
+                totalCpu += p.getCPUTimeUsed();
             }
+            int totalTime = currentTime + 1;
+            int totalIdle = Math.max(0, totalTime - totalCpu);
+            metrics.setTotalCPUTime(totalCpu);
+            metrics.setTotalIdleTime(totalIdle);
+            metrics.setContextSwitches(contextSwitches);
+
+            if (memoryManager != null) {
+                try {
+                    eventLogger.log(String.format("Memory stats: PageFaults=%d Replacements=%d FreeFrames=%d",
+                            memoryManager.getTotalPageFaults(),
+                            memoryManager.getTotalReplacements(),
+                            memoryManager.getFreeFrames()));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            updateListener.onUpdate();
+            eventLogger.log("Simulation complete");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            eventLogger.log("Finalization interrupted");
         }
-        updateListener.onUpdate();
-        eventLogger.log("Simulation complete");
     }
 
     /**
@@ -703,7 +726,12 @@ public class OSSimulator {
      *
      * @return true si todos los procesos están en estado TERMINATED
      */
-    private boolean allProcessesTerminated() {
-        return allProcesses.stream().allMatch(Proceso::isComplete);
+    private boolean allProcessesTerminated() throws InterruptedException {
+        for (Proceso p : allProcesses) {
+            if (!p.isComplete()) {
+                return false;
+            }
+        }
+        return true;
     }
 }

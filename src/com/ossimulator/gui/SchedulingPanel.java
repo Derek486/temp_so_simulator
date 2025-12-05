@@ -91,24 +91,28 @@ public class SchedulingPanel extends JPanel {
             g.setColor(Color.BLACK);
             g.drawString(p.getPid(), 8, rowY + ROW_HEIGHT - 4);
 
-            for (Interval itv : p.getCpuIntervals()) {
-                int x1 = LEFT_LABEL_WIDTH + itv.start * TICK_WIDTH;
-                int x2 = LEFT_LABEL_WIDTH + itv.end * TICK_WIDTH;
-                int w = Math.max(1, x2 - x1);
-                g.setColor(new Color(70, 130, 180));
-                g.fillRect(x1, rowY, w, ROW_HEIGHT);
-            }
+            try {
+                for (Interval itv : p.getCpuIntervals()) {
+                    int x1 = LEFT_LABEL_WIDTH + itv.start * TICK_WIDTH;
+                    int x2 = LEFT_LABEL_WIDTH + itv.end * TICK_WIDTH;
+                    int w = Math.max(1, x2 - x1);
+                    g.setColor(new Color(70, 130, 180));
+                    g.fillRect(x1, rowY, w, ROW_HEIGHT);
+                }
 
-            int ioRowY = ioAreaTop + i * (ROW_HEIGHT + ROW_SPACING);
-            g.setColor(Color.BLACK);
-            g.drawString(p.getPid(), 8, ioRowY + ROW_HEIGHT - 4);
+                int ioRowY = ioAreaTop + i * (ROW_HEIGHT + ROW_SPACING);
+                g.setColor(Color.BLACK);
+                g.drawString(p.getPid(), 8, ioRowY + ROW_HEIGHT - 4);
 
-            for (Interval itv : p.getIoIntervals()) {
-                int x1 = LEFT_LABEL_WIDTH + itv.start * TICK_WIDTH;
-                int x2 = LEFT_LABEL_WIDTH + itv.end * TICK_WIDTH;
-                int w = Math.max(1, x2 - x1);
-                g.setColor(new Color(220, 100, 80));
-                g.fillRect(x1, ioRowY, w, ROW_HEIGHT);
+                for (Interval itv : p.getIoIntervals()) {
+                    int x1 = LEFT_LABEL_WIDTH + itv.start * TICK_WIDTH;
+                    int x2 = LEFT_LABEL_WIDTH + itv.end * TICK_WIDTH;
+                    int w = Math.max(1, x2 - x1);
+                    g.setColor(new Color(220, 100, 80));
+                    g.fillRect(x1, ioRowY, w, ROW_HEIGHT);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
             }
 
             g.setColor(new Color(180, 180, 180));
