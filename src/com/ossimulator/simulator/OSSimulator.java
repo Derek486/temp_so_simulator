@@ -9,7 +9,6 @@ import com.ossimulator.scheduling.RoundRobin;
 import com.ossimulator.scheduling.SchedulingAlgorithm;
 import com.ossimulator.util.Semaphore;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Queue;
@@ -51,6 +50,7 @@ public class OSSimulator {
     private int timeSliceRemaining = 0;
 
     private Proceso runningProcess = null;
+    private Proceso runningProcessIO = null;
 
     private SimulationUpdateListener updateListener;
 
@@ -273,45 +273,47 @@ public class OSSimulator {
                 return;
             }
 
-            Iterator<Proceso> iterator = ioQueue.iterator();
+            Proceso p = ioQueue.peek();
 
-            while (iterator.hasNext()) {
-                Proceso p = iterator.next();
+            while (p.getState() != ProcessState.BLOCKED_IO) {
+                ioQueue.remove();
+                p = ioQueue.peek();
 
-                // si el proceso ya no esta bloqueado por IO simplemnete lo bota
-                if (p.getState() != ProcessState.BLOCKED_IO) {
-                    iterator.remove();
-                    continue;
+                if (p == null) {
+                    return;
                 }
+            }
 
-                // decrementa el tiempo restante del burst acutual (no cuenta uso de cpu)
-                p.decrementCurrentBurstTime(1, false);
+            if (p != this.runningProcessIO) {
+                this.runningProcessIO = p;
+                this.runningProcessIO.startIoInterval(currentTime);
+            }
 
-                if (p.getBurstTimeRemaining() <= 0) {
-                    if (p.moveToNextBurst()) {
-                        // si existe un siguiente burst lo mueve
-                        p.endIoInterval(currentTime);
-                        // pasa de IO a la cola de listos (esta logica la puede hacer
-                        // el planificador)
-                        p.setState(ProcessState.READY);
-                        iterator.remove(); // se quita de la cola de io
+            // decrementa el tiempo restante del burst acutual (no cuenta uso de cpu)
+            this.runningProcessIO.decrementCurrentBurstTime(1, false);
 
-                        // se le asigna a una cola especial de ready (pseudo ready
-                        // solo para ser recibidos en el siguiente tick hacia la cola
-                        // real de ready)
-                        if (!readyNextTick.contains(p)) {
-                            readyNextTick.add(p);
-                        }
-                        eventLogger.log(p.getPid() + " I/O completed, scheduled to move to Ready next tick");
-                    } else {
-                        p.setState(ProcessState.TERMINATED);
-                        p.setEndTime(currentTime);
-                        metrics.addCompletedProcess(p);
-                        iterator.remove();
-                        eventLogger.log(p.getPid() + " terminated in IO");
-                        if (memoryManager != null) {
-                            memoryManager.unloadProcessPages(p); // se descargan las paginas del proceso terminado
-                        }
+            if (this.runningProcessIO.getBurstTimeRemaining() <= 0) {
+                if (this.runningProcessIO.moveToNextBurst()) {
+                    // si existe un siguiente burst lo mueve
+                    this.runningProcessIO.endIoInterval(currentTime);
+                    // pasa de IO a la cola de listos (esta logica la puede hacer
+                    // el planificador)
+                    this.runningProcessIO.setState(ProcessState.READY);
+
+                    // se le asigna a una cola especial de ready (pseudo ready
+                    // solo para ser recibidos en el siguiente tick hacia la cola
+                    // real de ready)
+                    if (!readyNextTick.contains(p)) {
+                        readyNextTick.add(p);
+                    }
+                    eventLogger.log(this.runningProcessIO.getPid() + " I/O completed, scheduled to move to Ready next tick");
+                } else {
+                    this.runningProcessIO.setState(ProcessState.TERMINATED);
+                    this.runningProcessIO.setEndTime(currentTime);
+                    metrics.addCompletedProcess(p);
+                    eventLogger.log(this.runningProcessIO.getPid() + " terminated in IO");
+                    if (memoryManager != null) {
+                        memoryManager.unloadProcessPages(p); // se descargan las paginas del proceso terminado
                     }
                 }
             }
@@ -507,7 +509,6 @@ public class OSSimulator {
         // se aprovecha para hacer el switch de IO en caso sea
         if (next.getType() == BurstType.IO) {
             runningProcess.setBurstTimeRemaining(next.getDuration());
-            runningProcess.startIoInterval(currentTime + 1);
             runningProcess.setState(ProcessState.BLOCKED_IO);
 
             mutex.waitSemaphore();
