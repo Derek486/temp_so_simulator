@@ -279,12 +279,17 @@ public class MainWindow extends JFrame {
      * Actualiza los paneles visibles con el estado actual del simulador y memoria.
      */
     private void updateUI() {
-        if (simulator != null) {
-            schedulingPanel.updateData(simulator);
-            metricsPanel.updateMetrics(simulator.getMetrics());
-        }
-        if (this.memoryManager != null) {
-            memoryPanel.updateData(this.memoryManager);
+        try {
+            if (simulator != null) {
+                schedulingPanel.updateData(simulator);
+                metricsPanel.updateMetrics(simulator.getMetrics());
+            }
+            if (this.memoryManager != null) {
+                memoryPanel.updateData(this.memoryManager);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return;
         }
     }
 

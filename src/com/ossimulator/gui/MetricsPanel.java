@@ -37,7 +37,7 @@ public class MetricsPanel extends JPanel {
         add(contextSwitchesLabel);
     }
 
-    public void updateMetrics(SystemMetrics metrics) {
+    public void updateMetrics(SystemMetrics metrics) throws InterruptedException {
         if (metrics != null) {
             avgWaitLabel.setText(String.format("Average Waiting Time: %.2f", metrics.getAverageWaitingTime()));
             avgTurnaroundLabel.setText(String.format("Average Turnaround Time: %.2f", metrics.getAverageTurnaroundTime()));
