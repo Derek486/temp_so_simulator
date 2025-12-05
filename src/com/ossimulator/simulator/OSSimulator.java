@@ -95,19 +95,6 @@ public class OSSimulator {
     }
 
     /**
-     * Establece la latencia (delay) entre ticks en milisegundos.
-     *
-     * @param millis milisegundos por tick (>= 0). 0 = ejecución lo más rápido
-     *               posible.
-     */
-    public void setTickDelayMillis(long millis) {
-        if (millis < 0) {
-            throw new IllegalArgumentException("tickDelayMillis must be >= 0");
-        }
-        this.tickDelayMillis = millis;
-    }
-
-    /**
      * Arranca la simulación en un hilo separado.
      */
     public void start() {
@@ -148,6 +135,9 @@ public class OSSimulator {
                     memoryManager.setCurrentTime(currentTime);
                 }
 
+                // simplemente llegan los procesos en un tick especifco, carga sus paginas y
+                // los pone en la cola de listos para posteriormente se usados por el
+                // planificador
                 handleArrivals();
 
                 mutex.waitSemaphore();
@@ -288,18 +278,27 @@ public class OSSimulator {
             while (iterator.hasNext()) {
                 Proceso p = iterator.next();
 
+                // si el proceso ya no esta bloqueado por IO simplemnete lo bota
                 if (p.getState() != ProcessState.BLOCKED_IO) {
                     iterator.remove();
                     continue;
                 }
 
+                // decrementa el tiempo restante del burst acutual (no cuenta uso de cpu)
                 p.decrementCurrentBurstTime(1, false);
 
                 if (p.getBurstTimeRemaining() <= 0) {
                     if (p.moveToNextBurst()) {
+                        // si existe un siguiente burst lo mueve
                         p.endIoInterval(currentTime);
+                        // pasa de IO a la cola de listos (esta logica la puede hacer
+                        // el planificador)
                         p.setState(ProcessState.READY);
-                        iterator.remove();
+                        iterator.remove(); // se quita de la cola de io
+
+                        // se le asigna a una cola especial de ready (pseudo ready
+                        // solo para ser recibidos en el siguiente tick hacia la cola
+                        // real de ready)
                         if (!readyNextTick.contains(p)) {
                             readyNextTick.add(p);
                         }
@@ -311,7 +310,7 @@ public class OSSimulator {
                         iterator.remove();
                         eventLogger.log(p.getPid() + " terminated in IO");
                         if (memoryManager != null) {
-                            memoryManager.unloadProcessPages(p);
+                            memoryManager.unloadProcessPages(p); // se descargan las paginas del proceso terminado
                         }
                     }
                 }
@@ -334,7 +333,7 @@ public class OSSimulator {
 
         mutex.waitSemaphore();
         try {
-            if (memoryBlockedQueue.isEmpty()) {
+            if (memoryBlockedQueue.isEmpty()) { // validacion si la cola no esta vacia
                 return;
             }
         } finally {
@@ -344,7 +343,7 @@ public class OSSimulator {
         List<Proceso> toReady = new ArrayList<>();
 
         for (Proceso p : new ArrayList<>(memoryBlockedQueue)) {
-            if (memoryManager.tryLoadProcessPages(p)) {
+            if (memoryManager.tryLoadProcessPages(p)) { // reintenta asignar las paginas
                 p.setState(ProcessState.READY);
                 toReady.add(p);
                 eventLogger.log(p.getPid() + " memory loaded, moved to Ready queue");
@@ -357,12 +356,13 @@ public class OSSimulator {
         if (!toReady.isEmpty()) {
             mutex.waitSemaphore();
             try {
-                for (Proceso p : toReady) {
+                for (Proceso p : toReady) { // de la cola de los que se pudieron asignar, los switchea a la cola de
+                                            // listos
                     if (memoryBlockedQueue.contains(p)) {
                         memoryBlockedQueue.remove(p);
                         if (!readyQueue.contains(p)) {
                             readyQueue.add(p);
-                            avaliableProcesses.signalSemaphore();
+                            avaliableProcesses.signalSemaphore(); // avisa que hay procesos disponibles
                         }
                     }
                 }
@@ -388,6 +388,7 @@ public class OSSimulator {
 
         try {
             if (!readyQueue.isEmpty()) {
+                // se elige el sig proceso y se remueve de la cola de listos
                 candidate = scheduler.selectNextProcess(new ArrayList<>(readyQueue));
                 if (candidate != null) {
                     readyQueue.remove(candidate);
@@ -402,6 +403,9 @@ public class OSSimulator {
             return;
         }
 
+        // se le intenta asignarle las paginas antes de ser ejecutado (esta validación
+        // ya se está aplicando al llegar el proceso y al tratar de ejecutar su burst
+        // cpu)
         if (memoryManager != null && !memoryManager.tryLoadProcessPages(candidate)) {
             mutex.waitSemaphore();
             try {
@@ -415,11 +419,11 @@ public class OSSimulator {
         }
 
         runningProcess = candidate;
-        runningProcess.setStartTimeIfUnset(currentTime);
-        runningProcess.setState(ProcessState.RUNNING);
-        runningProcess.startCpuInterval(currentTime);
-        contextSwitches++;
-        runningProcess.incrementContextSwitches();
+        runningProcess.setStartTimeIfUnset(currentTime); // para el gantt, tiempo de inicio global
+        runningProcess.setState(ProcessState.RUNNING); // cambio de contexto simplificado
+        runningProcess.startCpuInterval(currentTime); // tiempo de inicio de rafaga de cpu
+        contextSwitches++; // este cambio de contexto se puede controlar cuando aumenta y cuando no
+        runningProcess.incrementContextSwitches(); // para cambios de contexto por proceso
 
         if (scheduler instanceof RoundRobin) {
             timeSliceRemaining = Math.max(1, timeSlice);
@@ -438,17 +442,20 @@ public class OSSimulator {
      *                              interrumpida
      */
     private void executeCpuTick() throws InterruptedException {
+        // si no hay nada que ejecutar, se olvida de este tick (aunque este bloque
+        // podría usarse para contar el tiempo muerto del CPU)
         if (runningProcess == null || runningProcess.getState() != ProcessState.RUNNING) {
             return;
         }
 
         if (runningProcess.getPageCount() > 0 && memoryManager != null) {
+            // segun esto por cada tick accede a una página (del 0 al pageCount del proceso
+            // y reinicia)
             int pageToAccess = runningProcess.getCpuTimeUsed() % runningProcess.getPageCount();
             memoryManager.accessPage(runningProcess, pageToAccess);
         }
 
         runningProcess.decrementCurrentBurstTime(1, true);
-        runningProcess.addCpuTick();
         timeSliceRemaining = Math.max(0, timeSliceRemaining - 1);
 
         if (runningProcess.getBurstTimeRemaining() <= 0) {
@@ -479,8 +486,11 @@ public class OSSimulator {
         runningProcess.endCpuInterval(currentTime);
 
         if (!hasNext) {
+            // si termina un proceso finaliza sus intervalos, lo carga en las métricas y
+            // descarga sus paginas de memoria
+
             runningProcess.setEndTime(currentTime);
-            runningProcess.closeOpenIntervalsAtTermination(currentTime);
+            runningProcess.closeOpenIntervalsAtTermination(currentTime); // cierra todos sus intervalos
             runningProcess.setState(ProcessState.TERMINATED);
             metrics.addCompletedProcess(runningProcess);
             eventLogger.log(runningProcess.getPid() + " terminated");
@@ -492,7 +502,10 @@ public class OSSimulator {
         }
 
         Burst next = runningProcess.getCurrentBurst();
-        if (next != null && next.getType() == BurstType.IO) {
+
+        // Ya que se hace el switch para rafagas de cada proceso,
+        // se aprovecha para hacer el switch de IO en caso sea
+        if (next.getType() == BurstType.IO) {
             runningProcess.setBurstTimeRemaining(next.getDuration());
             runningProcess.startIoInterval(currentTime + 1);
             runningProcess.setState(ProcessState.BLOCKED_IO);
@@ -511,6 +524,7 @@ public class OSSimulator {
             return;
         }
 
+        // finalizado su burst, se le pasa a la cola de listo
         runningProcess.setState(ProcessState.READY);
         mutex.waitSemaphore();
         try {
@@ -530,6 +544,8 @@ public class OSSimulator {
      * @throws InterruptedException si la espera del mutex es interrumpida
      */
     private void preemptForQuantumExpiry() throws InterruptedException {
+        // lo envia de frente a la cola de ready y stopea su cpu burst
+
         runningProcess.endCpuInterval(currentTime);
         runningProcess.setState(ProcessState.READY);
 
@@ -559,6 +575,8 @@ public class OSSimulator {
         mutex.waitSemaphore();
         try {
             int moved = 0;
+            // los que estaban esperando en la cola de pseudolistos pasan a la cola real de
+            // listos
             for (Proceso p : new ArrayList<>(readyNextTick)) {
                 if (!readyQueue.contains(p)) {
                     readyQueue.add(p);
@@ -579,7 +597,7 @@ public class OSSimulator {
      */
     private void finalizeSimulation() {
         int totalCpu = allProcesses.stream().mapToInt(Proceso::getCPUTimeUsed).sum();
-        int totalTime = currentTime;
+        int totalTime = currentTime + 1;
         int totalIdle = Math.max(0, totalTime - totalCpu);
         metrics.setTotalCPUTime(totalCpu);
         metrics.setTotalIdleTime(totalIdle);
@@ -595,7 +613,7 @@ public class OSSimulator {
                 Thread.currentThread().interrupt();
             }
         }
-
+        updateListener.onUpdate();
         eventLogger.log("Simulation complete");
     }
 

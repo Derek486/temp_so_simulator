@@ -400,7 +400,7 @@ public class Proceso implements Comparable<Proceso> {
         if (startTime == -1 || endTime == -1) {
             return 0;
         }
-        int waiting = (endTime - startTime) - cpuTimeUsed;
+        int waiting = startTime;
         return Math.max(0, waiting);
     }
 
@@ -413,7 +413,7 @@ public class Proceso implements Comparable<Proceso> {
         if (startTime == -1 || endTime == -1) {
             return 0;
         }
-        int tr = endTime - startTime;
+        int tr = (endTime + 1) - startTime;
         return Math.max(0, tr);
     }
 

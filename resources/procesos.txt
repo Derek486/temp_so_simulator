@@ -1,7 +1,0 @@
-# TEST 3: Integración - Page Fault, Contencion y Quantum
-# Alto numero de paginas para forzar fallos rapidos
-
-P_A 0 CPU(15),E/S(1),CPU(10) 1 8
-P_B 0 CPU(15),E/S(1),CPU(10) 1 8
-P_C 0 CPU(15),E/S(1),CPU(10) 1 8
-P_D 0 CPU(15),E/S(1),CPU(10) 1 8
