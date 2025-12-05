@@ -10,17 +10,31 @@ import java.awt.Graphics;
 import java.util.List;
 import javax.swing.JPanel;
 
+/**
+ * SchedulingPanel
+ *
+ * Panel que pinta un Gantt para las ráfagas de CPU e I/O por proceso.
+ * Usa la información de OSSimulator.getAllProcesses() y getCurrentTime()
+ * para dibujar barras escaladas por tick.
+ */
 public class SchedulingPanel extends JPanel {
+    private static final long serialVersionUID = 1L;
+
     private OSSimulator simulator;
     private static final int LEFT_LABEL_WIDTH = 80;
     private static final int ROW_HEIGHT = 18;
     private static final int ROW_SPACING = 8;
-    private static final int TICK_WIDTH = 12; // pixels per time unit; ajusta si quieres zoom
+    private static final int TICK_WIDTH = 12;
 
     public SchedulingPanel() {
         setPreferredSize(new Dimension(900, 300));
     }
 
+    /**
+     * Actualiza la referencia al simulador y repinta el panel.
+     *
+     * @param sim instancia del simulador (puede ser null)
+     */
     public void updateData(OSSimulator sim) {
         this.simulator = sim;
         repaint();
@@ -37,8 +51,8 @@ public class SchedulingPanel extends JPanel {
         }
 
         List<Proceso> processes = simulator.getAllProcesses();
-        int n = processes.size();
-        if (n == 0) {
+        int n = (processes == null) ? 0 : processes.size();
+        if (n == 0 || processes == null) {
             g.drawString("No processes loaded", 10, 20);
             return;
         }
@@ -48,20 +62,17 @@ public class SchedulingPanel extends JPanel {
         int ioAreaTop = cpuAreaTop + cpuAreaHeight + 40;
         int ioAreaHeight = cpuAreaHeight;
 
-        // titulos
         g.setColor(Color.BLACK);
         g.drawString("CPU Gantt", LEFT_LABEL_WIDTH, cpuAreaTop - 4);
         g.drawString("I/O Gantt", LEFT_LABEL_WIDTH, ioAreaTop - 4);
 
-        // dibujar grid de ticks horizontales
         int currentTime = simulator.getCurrentTime();
-        int widthNeeded = LEFT_LABEL_WIDTH + (currentTime + 10) * TICK_WIDTH; // algo de margen
+        int widthNeeded = LEFT_LABEL_WIDTH + (currentTime + 10) * TICK_WIDTH;
         if (widthNeeded > getWidth()) {
             setPreferredSize(new Dimension(widthNeeded, Math.max(getHeight(), ioAreaTop + ioAreaHeight + 20)));
             revalidate();
         }
 
-        // marcar ticks y líneas verticales
         g.setColor(new Color(220, 220, 220));
         for (int t = 0; t <= currentTime + 5; t++) {
             int x = LEFT_LABEL_WIDTH + t * TICK_WIDTH;
@@ -73,48 +84,42 @@ public class SchedulingPanel extends JPanel {
             }
         }
 
-        // dibujar filas de procesos
         for (int i = 0; i < n; i++) {
             Proceso p = processes.get(i);
             int rowY = cpuAreaTop + i * (ROW_HEIGHT + ROW_SPACING);
 
-            // dibujar etiqueta PID
             g.setColor(Color.BLACK);
             g.drawString(p.getPid(), 8, rowY + ROW_HEIGHT - 4);
 
-            // dibujar intervalos CPU
-            for (Interval itv : p.getCpuIntervals()) {
-                int x1 = LEFT_LABEL_WIDTH + itv.start * TICK_WIDTH;
-                int x2 = LEFT_LABEL_WIDTH + itv.end * TICK_WIDTH;
-                int w = Math.max(1, x2 - x1);
-                g.setColor(new Color(70, 130, 180)); // steel blue
-                g.fillRect(x1, rowY, w, ROW_HEIGHT);
+            try {
+                for (Interval itv : p.getCpuIntervals()) {
+                    int x1 = LEFT_LABEL_WIDTH + itv.start * TICK_WIDTH;
+                    int x2 = LEFT_LABEL_WIDTH + itv.end * TICK_WIDTH;
+                    int w = Math.max(1, x2 - x1);
+                    g.setColor(new Color(70, 130, 180));
+                    g.fillRect(x1, rowY, w, ROW_HEIGHT);
+                }
+
+                int ioRowY = ioAreaTop + i * (ROW_HEIGHT + ROW_SPACING);
+                g.setColor(Color.BLACK);
+                g.drawString(p.getPid(), 8, ioRowY + ROW_HEIGHT - 4);
+
+                for (Interval itv : p.getIoIntervals()) {
+                    int x1 = LEFT_LABEL_WIDTH + itv.start * TICK_WIDTH;
+                    int x2 = LEFT_LABEL_WIDTH + itv.end * TICK_WIDTH;
+                    int w = Math.max(1, x2 - x1);
+                    g.setColor(new Color(220, 100, 80));
+                    g.fillRect(x1, ioRowY, w, ROW_HEIGHT);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
             }
 
-            // si hay un intervalo CPU abierto (en ejecución) dibujarlo hasta currentTime
-            if (p.getCpuIntervals().isEmpty() == false) {
-                // ya dibujados
-            }
-            // dibujar I/O en la zona inferior
-            int ioRowY = ioAreaTop + i * (ROW_HEIGHT + ROW_SPACING);
-            g.setColor(Color.BLACK);
-            g.drawString(p.getPid(), 8, ioRowY + ROW_HEIGHT - 4);
-
-            for (Interval itv : p.getIoIntervals()) {
-                int x1 = LEFT_LABEL_WIDTH + itv.start * TICK_WIDTH;
-                int x2 = LEFT_LABEL_WIDTH + itv.end * TICK_WIDTH;
-                int w = Math.max(1, x2 - x1);
-                g.setColor(new Color(220, 100, 80)); // rojo suave
-                g.fillRect(x1, ioRowY, w, ROW_HEIGHT);
-            }
-
-            // dibujar separador (línea fina)
             g.setColor(new Color(180, 180, 180));
             int sepY = rowY + ROW_HEIGHT + ROW_SPACING / 2;
             g.drawLine(LEFT_LABEL_WIDTH, sepY, getWidth() - 10, sepY);
         }
 
-        // Leyenda
         int legendY = ioAreaTop + ioAreaHeight + 24;
         g.setColor(new Color(70, 130, 180));
         g.fillRect(LEFT_LABEL_WIDTH, legendY, 14, 10);

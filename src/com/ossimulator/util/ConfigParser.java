@@ -1,41 +1,72 @@
 package com.ossimulator.util;
 
+import com.ossimulator.process.Burst;
+import com.ossimulator.process.BurstType;
+import com.ossimulator.process.Proceso;
 import java.io.BufferedReader;
-import java.io.BufferedWriter;
-import java.io.FileReader;
-import java.io.FileWriter;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import com.ossimulator.process.Burst;
-import com.ossimulator.process.BurstType;
+/**
+ * ConfigParser
+ *
+ * Utilidades para leer/escribir ficheros de procesos en formato simple.
+ *
+ * Formato por línea:
+ * PID ARRIVAL BURSTS PRIORITY PAGECOUNT
+ *
+ * Ejemplo de bursts: CPU(5),E/S(3),CPU(4)
+ *
+ * Los métodos usan try-with-resources para garantizar el cierre de streams.
+ */
+public final class ConfigParser {
 
-public class ConfigParser {
-    public static List<com.ossimulator.process.Proceso> parseProcessesFromFile(String filename) throws IOException {
-        List<com.ossimulator.process.Proceso> processes = new ArrayList<>();
-        BufferedReader reader = new BufferedReader(new FileReader(filename));
-        String line;
+    private static final Pattern BURST_PATTERN = Pattern.compile("(CPU|E/S)\\((\\d+)\\)");
 
-        while ((line = reader.readLine()) != null) {
-            line = line.trim();
-            if (line.isEmpty() || line.startsWith("#")) {
-                continue;
-            }
+    private ConfigParser() {
+    }
 
-            com.ossimulator.process.Proceso p = parseProcessLine(line);
-            if (p != null) {
-                processes.add(p);
+    /**
+     * Parsea una lista de procesos desde un fichero.
+     *
+     * @param filename ruta del fichero a leer
+     * @return lista de procesos parseados
+     * @throws IOException si ocurre un error de I/O o de formato numérico
+     */
+    public static List<Proceso> parseProcessesFromFile(String filename) throws IOException {
+        List<Proceso> processes = new ArrayList<>();
+        Path p = Path.of(filename);
+
+        try (BufferedReader reader = Files.newBufferedReader(p)) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                line = line.trim();
+                if (line.isEmpty() || line.startsWith("#")) {
+                    continue;
+                }
+                Proceso proc = parseProcessLine(line);
+                if (proc != null) {
+                    processes.add(proc);
+                }
             }
         }
 
-        reader.close();
         return processes;
     }
 
-    private static com.ossimulator.process.Proceso parseProcessLine(String line) {
+    /**
+     * Parsea una línea que describe un proceso.
+     *
+     * @param line línea con formato: PID ARRIVAL BURSTS PRIORITY PAGECOUNT
+     * @return Proceso creado o null si la línea no es válida
+     * @throws IOException si hay error de formato en números
+     */
+    private static Proceso parseProcessLine(String line) throws IOException {
         String[] parts = line.split("\\s+");
         if (parts.length < 5) {
             return null;
@@ -48,45 +79,29 @@ public class ConfigParser {
         int pageCount = Integer.parseInt(parts[4]);
 
         List<Burst> bursts = parseBursts(burstsStr);
-        return new com.ossimulator.process.Proceso(pid, arrivalTime, bursts, priority, pageCount);
+        return new Proceso(pid, arrivalTime, bursts, priority, pageCount);
     }
 
+    /**
+     * Parsea la representación compacta de ráfagas.
+     *
+     * @param burstsStr ejemplo: "CPU(5),E/S(3),CPU(2)"
+     * @return lista de Burst (posiblemente vacía)
+     */
     private static List<Burst> parseBursts(String burstsStr) {
         List<Burst> bursts = new ArrayList<>();
-        Pattern pattern = Pattern.compile("(CPU|E/S)\\((\\d+)\\)");
-        Matcher matcher = pattern.matcher(burstsStr);
+        if (burstsStr == null || burstsStr.isBlank()) {
+            return bursts;
+        }
 
+        Matcher matcher = BURST_PATTERN.matcher(burstsStr);
         while (matcher.find()) {
             String type = matcher.group(1);
             int duration = Integer.parseInt(matcher.group(2));
-
-            BurstType burstType = type.equals("CPU") ? BurstType.CPU : BurstType.IO;
+            BurstType burstType = "CPU".equals(type) ? BurstType.CPU : BurstType.IO;
             bursts.add(new Burst(burstType, duration));
         }
 
         return bursts;
-    }
-
-    public static void saveProcessesToFile(String filename, List<com.ossimulator.process.Proceso> processes) throws IOException {
-        BufferedWriter writer = new BufferedWriter(new FileWriter(filename));
-
-        for (com.ossimulator.process.Proceso p : processes) {
-            StringBuilder sb = new StringBuilder();
-            sb.append(p.getPid()).append(" ");
-            sb.append(p.getArrivalTime()).append(" ");
-
-            sb.append(p.getBursts().stream()
-                    .map(Burst::toString)
-                    .reduce((a, b) -> a + "," + b)
-                    .orElse(""));
-
-            sb.append(" ").append(p.getPriority());
-            sb.append(" ").append(p.getPageCount());
-
-            writer.write(sb.toString());
-            writer.newLine();
-        }
-
-        writer.close();
     }
 }

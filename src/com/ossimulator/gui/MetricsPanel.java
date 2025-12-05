@@ -1,14 +1,14 @@
 package com.ossimulator.gui;
 
 import com.ossimulator.simulator.SystemMetrics;
-import javax.swing.*;
 import java.awt.*;
+import javax.swing.*;
 
 public class MetricsPanel extends JPanel {
-    private JLabel avgWaitLabel;
-    private JLabel avgTurnaroundLabel;
-    private JLabel cpuUtilLabel;
-    private JLabel contextSwitchesLabel;
+    private final JLabel avgWaitLabel;
+    private final JLabel avgTurnaroundLabel;
+    private final JLabel cpuUtilLabel;
+    private final JLabel contextSwitchesLabel;
 
     public MetricsPanel() {
         setLayout(new GridLayout(4, 1, 10, 10));
@@ -37,7 +37,7 @@ public class MetricsPanel extends JPanel {
         add(contextSwitchesLabel);
     }
 
-    public void updateMetrics(SystemMetrics metrics) {
+    public void updateMetrics(SystemMetrics metrics) throws InterruptedException {
         if (metrics != null) {
             avgWaitLabel.setText(String.format("Average Waiting Time: %.2f", metrics.getAverageWaitingTime()));
             avgTurnaroundLabel.setText(String.format("Average Turnaround Time: %.2f", metrics.getAverageTurnaroundTime()));

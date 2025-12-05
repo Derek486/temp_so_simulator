@@ -5,7 +5,6 @@ import com.ossimulator.memory.LRU;
 import com.ossimulator.memory.MemoryManager;
 import com.ossimulator.memory.Optimal;
 import com.ossimulator.memory.PageReplacementAlgorithm;
-import com.ossimulator.process.Burst;
 import com.ossimulator.process.Proceso;
 import com.ossimulator.scheduling.FCFS;
 import com.ossimulator.scheduling.PriorityScheduling;
@@ -21,31 +20,28 @@ import java.awt.GridLayout;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import javax.swing.BorderFactory;
-import javax.swing.Box;
-import javax.swing.BoxLayout;
-import javax.swing.JButton;
-import javax.swing.JComboBox;
-import javax.swing.JFileChooser;
-import javax.swing.JFrame;
-import javax.swing.JLabel;
-import javax.swing.JOptionPane;
-import javax.swing.JPanel;
-import javax.swing.JScrollPane;
-import javax.swing.JSpinner;
-import javax.swing.JSplitPane;
-import javax.swing.JTextArea;
-import javax.swing.SpinnerNumberModel;
-import javax.swing.SwingUtilities;
+import javax.swing.*;
 
+/**
+ * MainWindow
+ *
+ * Ventana principal del simulador. Contiene:
+ * - Panel de configuración y control (carga, inicio, parada).
+ * - Panel visual: Gantt (scheduling), Memory visualizer y métricas.
+ *
+ * La clase administra la creación del OSSimulator y MemoryManager y expone
+ * métodos para iniciar/detener la simulación. El diseño separa UI de lógica:
+ * todo acceso a datos del simulador ocurre a través de sus getters y listeners.
+ */
 public class MainWindow extends JFrame {
+    private static final long serialVersionUID = 1L;
+
     private SchedulingPanel schedulingPanel;
-    private MemoryPanel memoryPanel;
+    private MemoryVisualizerPanel memoryPanel;
     private MetricsPanel metricsPanel;
     private OSSimulator simulator;
-    private MemoryManager memoryManager; // <-- referencia mantenida para UI
+    private MemoryManager memoryManager;
     private List<Proceso> loadedProcesses = new ArrayList<>();
-    private boolean simulationRunning = false;
 
     private JComboBox<String> schedulerCombo;
     private JComboBox<String> pageReplaceCombo;
@@ -67,18 +63,16 @@ public class MainWindow extends JFrame {
         layoutComponents();
     }
 
+    /**
+     * Inicializa componentes UI y controles.
+     */
     private void initComponents() {
         schedulingPanel = new SchedulingPanel();
-        memoryPanel = new MemoryPanel();
+        memoryPanel = new MemoryVisualizerPanel();
         metricsPanel = new MetricsPanel();
 
-        schedulerCombo = new JComboBox<>(new String[] {
-                "FCFS", "SJF", "Round Robin", "Priority"
-        });
-
-        pageReplaceCombo = new JComboBox<>(new String[] {
-                "FIFO", "LRU", "Optimal"
-        });
+        schedulerCombo = new JComboBox<>(new String[] { "FCFS", "SJF", "Round Robin", "Priority" });
+        pageReplaceCombo = new JComboBox<>(new String[] { "FIFO", "LRU", "Optimal" });
 
         quantumSpinner = new JSpinner(new SpinnerNumberModel(4, 1, 20, 1));
         memoryFramesSpinner = new JSpinner(new SpinnerNumberModel(10, 1, 200, 1));
@@ -98,22 +92,28 @@ public class MainWindow extends JFrame {
         loadButton.addActionListener(e -> loadProcesses());
     }
 
+    /**
+     * Construye el layout principal con panel de control y panel visual.
+     */
     private void layoutComponents() {
         JPanel controlPanel = createControlPanel();
         JPanel visualPanel = createVisualPanel();
 
         JSplitPane mainSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, controlPanel, visualPanel);
         mainSplit.setDividerLocation(300);
-
         add(mainSplit);
     }
 
+    /**
+     * Crea el panel lateral de control con configuraciones y log de eventos.
+     *
+     * @return JPanel listo para colocarse en la ventana principal
+     */
     private JPanel createControlPanel() {
         JPanel mainPanel = new JPanel(new BorderLayout());
         mainPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
         mainPanel.setBackground(new Color(240, 240, 240));
 
-        // --- PANEL SUPERIOR ---
         JPanel topPanel = new JPanel();
         topPanel.setLayout(new BoxLayout(topPanel, BoxLayout.Y_AXIS));
         topPanel.setBackground(new Color(240, 240, 240));
@@ -123,19 +123,15 @@ public class MainWindow extends JFrame {
 
         topPanel.add(configTitle);
         topPanel.add(Box.createVerticalStrut(10));
-
         topPanel.add(new JLabel("Scheduling Algorithm:"));
         topPanel.add(schedulerCombo);
         topPanel.add(Box.createVerticalStrut(5));
-
         topPanel.add(new JLabel("Page Replacement:"));
         topPanel.add(pageReplaceCombo);
         topPanel.add(Box.createVerticalStrut(5));
-
         topPanel.add(new JLabel("Quantum (RR):"));
         topPanel.add(quantumSpinner);
         topPanel.add(Box.createVerticalStrut(5));
-
         topPanel.add(new JLabel("Memory Frames:"));
         topPanel.add(memoryFramesSpinner);
         topPanel.add(Box.createVerticalStrut(10));
@@ -149,7 +145,6 @@ public class MainWindow extends JFrame {
         topPanel.add(buttonPanel);
         topPanel.add(Box.createVerticalStrut(10));
 
-        // --- PANEL INFERIOR (EVENT LOG) ---
         JPanel logPanel = new JPanel(new BorderLayout());
         JLabel logTitle = new JLabel("Event Log");
         logTitle.setFont(new Font("Arial", Font.BOLD, 14));
@@ -158,16 +153,21 @@ public class MainWindow extends JFrame {
         JScrollPane logScroll = new JScrollPane(logArea);
         logPanel.add(logScroll, BorderLayout.CENTER);
 
-        // El top es auto, el log ocupa lo restante
         mainPanel.add(topPanel, BorderLayout.NORTH);
         mainPanel.add(logPanel, BorderLayout.CENTER);
 
         return mainPanel;
     }
 
+    /**
+     * Crea el panel visual que contiene el Gantt, el visualizador de memoria y las
+     * métricas.
+     *
+     * @return JPanel con la vista principal del simulador
+     */
     private JPanel createVisualPanel() {
         JPanel panel = new JPanel();
-        panel.setLayout(new GridLayout(3, 1));
+        panel.setLayout(new java.awt.GridLayout(3, 1));
         panel.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
 
         JScrollPane ganttScroll = new JScrollPane(schedulingPanel);
@@ -178,6 +178,10 @@ public class MainWindow extends JFrame {
         return panel;
     }
 
+    /**
+     * Abre un selector de archivos para cargar procesos desde un archivo de
+     * configuración.
+     */
     private void loadProcesses() {
         JFileChooser fileChooser = new JFileChooser();
         int result = fileChooser.showOpenDialog(this);
@@ -199,19 +203,11 @@ public class MainWindow extends JFrame {
         }
     }
 
-    private List<Proceso> cloneProcesses(List<Proceso> src) {
-        List<Proceso> cloned = new ArrayList<>();
-        for (Proceso p : src) {
-            List<Burst> burstsClone = new ArrayList<>();
-            for (Burst b : p.getBursts()) {
-                burstsClone.add(new Burst(b.getType(), b.getDuration()));
-            }
-            Proceso cp = new Proceso(p.getPid(), p.getArrivalTime(), burstsClone, p.getPriority(), p.getPageCount());
-            cloned.add(cp);
-        }
-        return cloned;
-    }
-
+    /**
+     * Inicia la simulación creando OSSimulator y MemoryManager según la
+     * configuración seleccionada.
+     * Registra listeners para actualizar la UI en el hilo EDT.
+     */
     private void startSimulation() {
         if (loadedProcesses == null || loadedProcesses.isEmpty()) {
             JOptionPane.showMessageDialog(this, "No processes loaded. Please load processes first.", "Error",
@@ -219,68 +215,87 @@ public class MainWindow extends JFrame {
             return;
         }
 
-        List<Proceso> processes = cloneProcesses(this.loadedProcesses);
+        if (this.memoryManager != null) {
+            this.memoryManager.setUpdateListener(null);
+        }
 
         SchedulingAlgorithm scheduler = createScheduler();
         PageReplacementAlgorithm pageAlgorithm = createPageAlgorithm();
         int memoryFrames = (int) memoryFramesSpinner.getValue();
         int quantum = (int) quantumSpinner.getValue();
 
-        // keep reference in field so updateUI / MemoryPanel can access it
-        this.memoryManager = new MemoryManager(memoryFrames, pageAlgorithm);
+        final MemoryManager currentMemoryManager = new MemoryManager(memoryFrames, pageAlgorithm);
 
-        // register memory update listener to refresh memory panel (EDT)
-        this.memoryManager
-                .setUpdateListener(() -> SwingUtilities.invokeLater(() -> memoryPanel.updateData(this.memoryManager)));
+        this.memoryManager = currentMemoryManager;
 
-        simulator = new OSSimulator(processes, scheduler, this.memoryManager, quantum);
+        try {
+            currentMemoryManager.setPreserveFramesOnProcessTermination(true);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return;
+        }
+
+        currentMemoryManager
+                .setUpdateListener(
+                        () -> javax.swing.SwingUtilities.invokeLater(() -> memoryPanel.updateData(this.memoryManager)));
+
+        simulator = new OSSimulator(this.loadedProcesses, scheduler, this.memoryManager, quantum);
 
         simulator.setUpdateListener(new OSSimulator.SimulationUpdateListener() {
             @Override
             public void onUpdate() {
-                SwingUtilities.invokeLater(() -> updateUI());
+                javax.swing.SwingUtilities.invokeLater(() -> updateUI());
             }
 
             @Override
             public void onComplete() {
-                SwingUtilities.invokeLater(() -> simulationComplete());
+                javax.swing.SwingUtilities.invokeLater(() -> simulationComplete());
             }
         });
 
-        simulator.getEventLogger().addListener(event -> SwingUtilities.invokeLater(() -> logArea.append(event + "\n")));
+        simulator.getEventLogger()
+                .addListener(event -> javax.swing.SwingUtilities.invokeLater(() -> logArea.append(event + "\n")));
 
-        // initial UI refresh so memory table shows initial state
-        memoryPanel.updateData(this.memoryManager);
+        memoryPanel.updateData(currentMemoryManager);
 
-        simulationRunning = true;
         startButton.setEnabled(false);
         stopButton.setEnabled(true);
         simulator.start();
     }
 
+    /**
+     * Detiene la simulación actual y actualiza el estado de la UI.
+     */
     private void stopSimulation() {
         if (simulator != null) {
             simulator.stop();
-            simulator = null; // forzar nueva instancia en next start
+            simulator = null;
         }
-        // clear memory manager reference so next run will recreate it
-        this.memoryManager = null;
-        simulationRunning = false;
         startButton.setEnabled(true);
         stopButton.setEnabled(false);
     }
 
+    /**
+     * Actualiza los paneles visibles con el estado actual del simulador y memoria.
+     */
     private void updateUI() {
-        if (simulator != null) {
-            schedulingPanel.updateData(simulator);
-            metricsPanel.updateMetrics(simulator.getMetrics());
-        }
-        // update memory panel from the current memoryManager reference (may be null)
-        if (this.memoryManager != null) {
-            memoryPanel.updateData(this.memoryManager);
+        try {
+            if (simulator != null) {
+                schedulingPanel.updateData(simulator);
+                metricsPanel.updateMetrics(simulator.getMetrics());
+            }
+            if (this.memoryManager != null) {
+                memoryPanel.updateData(this.memoryManager);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return;
         }
     }
 
+    /**
+     * Muestra diálogo de finalización y restaura controles.
+     */
     private void simulationComplete() {
         JOptionPane.showMessageDialog(this, "Simulation complete!",
                 "Info", JOptionPane.INFORMATION_MESSAGE);
@@ -288,6 +303,11 @@ public class MainWindow extends JFrame {
         stopButton.setEnabled(false);
     }
 
+    /**
+     * Crea el algoritmo de planificación seleccionado por el usuario.
+     *
+     * @return SchedulingAlgorithm instancia del algoritmo
+     */
     private SchedulingAlgorithm createScheduler() {
         String selected = (String) schedulerCombo.getSelectedItem();
         return switch (selected) {
@@ -299,6 +319,11 @@ public class MainWindow extends JFrame {
         };
     }
 
+    /**
+     * Crea el algoritmo de reemplazo de páginas seleccionado por el usuario.
+     *
+     * @return PageReplacementAlgorithm instancia del algoritmo
+     */
     private PageReplacementAlgorithm createPageAlgorithm() {
         String selected = (String) pageReplaceCombo.getSelectedItem();
         return switch (selected) {
